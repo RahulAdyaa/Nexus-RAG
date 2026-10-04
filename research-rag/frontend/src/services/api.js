@@ -29,7 +29,7 @@ api.interceptors.response.use(
   }
 );
 
-export const uploadPDFs = async (files) => {
+export const uploadPDFs = async (files, onProgress) => {
   const formData = new FormData();
   files.forEach(file => {
     formData.append('files', file);
@@ -41,9 +41,30 @@ export const uploadPDFs = async (files) => {
         'Content-Type': 'multipart/form-data',
       },
     });
+    
+    const taskId = response.data.task_id;
+    if (taskId) {
+      if (onProgress) onProgress("Documents saved. Processing embeddings in background...");
+      
+      // Poll for completion
+      while (true) {
+        await new Promise(resolve => setTimeout(resolve, 3000)); // wait 3s
+        const statusResponse = await api.get(`/upload/status/${taskId}`);
+        if (statusResponse.data.status === 'completed') {
+          return {
+            ...response.data,
+            ...statusResponse.data.result,
+            message: "All documents processed successfully"
+          };
+        } else if (statusResponse.data.status === 'failed') {
+          throw new Error("Background processing failed: " + statusResponse.data.error);
+        }
+      }
+    }
+
     return response.data;
   } catch (error) {
-    throw new Error(error.response?.data?.detail || 'Upload failed');
+    throw new Error(error.response?.data?.detail || error.message || 'Upload failed');
   }
 };
 

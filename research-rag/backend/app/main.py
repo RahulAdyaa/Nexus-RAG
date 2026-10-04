@@ -78,6 +78,7 @@ class UploadResponse(BaseModel):
     success: bool
     session_id: str
     uploaded_files: List[str]
+    task_id: Optional[str] = None
     error: Optional[str] = None
 
 @app.get("/")
@@ -116,74 +117,60 @@ def cleanup_old_uploads():
 @app.post("/upload", response_model=UploadResponse)
 async def upload_pdfs(files: List[UploadFile] = File(...)):
     try:
-        # Run cache cleanup on each upload
         cleanup_old_uploads()
         
         if not files:
             raise HTTPException(status_code=400, detail="No files provided")
         
-        # Generate session ID for this upload batch
         session_id = str(uuid.uuid4())
-        
-        processed_files = 0
-        total_chunks = 0
-        all_chunks = []
         uploaded_files = []
+        file_metadata_list = []
         
         for file in files:
             if not file.filename.lower().endswith('.pdf'):
                 continue
             
-            # Save file to uploads directory persistently
             file_path = os.path.join(config.UPLOAD_DIR, file.filename)
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
             
-            try:
-                # Pass the original filename to preserve it in metadata
-                pages_data = pdf_loader.extract_text_from_pdf(file_path, file.filename)
-                if not pages_data:
-                    continue
-                
-                chunks = text_splitter.process_pages_to_chunks(pages_data)
-                if chunks:
-                    # Add session_id to each chunk for filtering
-                    for chunk in chunks:
-                        chunk['session_id'] = session_id
-                    
-                    all_chunks.extend(chunks)
-                    total_chunks += len(chunks)
-                    processed_files += 1
-                    uploaded_files.append(file.filename)
-                    
-                    file_size = os.path.getsize(file_path)
-                    db_store.add_document(
-                        filename=file.filename,
-                        total_pages=len(pages_data),
-                        total_chunks=len(chunks),
-                        file_size=file_size,
-                        session_id=session_id
-                    )
-                    db_store.add_chunks(chunks)
-                
-            except Exception as e:
-                print(f"Error processing {file.filename}: {e}")
-
+            uploaded_files.append(file.filename)
+            file_metadata_list.append({
+                "file_path": file_path,
+                "filename": file.filename
+            })
         
-        if all_chunks:
-            retriever.add_documents(all_chunks)
+        if not file_metadata_list:
+            raise HTTPException(status_code=400, detail="No valid PDF files provided")
+            
+        # Send to Celery worker
+        from app.worker import process_documents_task
+        task = process_documents_task.delay(file_metadata_list, session_id)
         
         return UploadResponse(
-            message=f"Successfully processed {processed_files} files with {total_chunks} chunks",
-            files_processed=processed_files,
-            total_chunks=total_chunks,
+            message="Processing started in the background",
+            files_processed=len(uploaded_files),
+            total_chunks=0,
             success=True,
             session_id=session_id,
-            uploaded_files=uploaded_files
+            uploaded_files=uploaded_files,
+            task_id=task.id
         )
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing files: {str(e)}")
+
+@app.get("/upload/status/{task_id}")
+async def get_upload_status(task_id: str):
+    from app.worker import celery_app
+    task_result = celery_app.AsyncResult(task_id)
+    
+    if task_result.state == 'PENDING':
+        return {"status": "processing", "message": "Task is waiting or running..."}
+    elif task_result.state != 'FAILURE':
+        return {"status": "completed", "result": task_result.info}
+    else:
+        return {"status": "failed", "error": str(task_result.info)}
 
 @app.post("/ask", response_model=QuestionResponse)
 async def ask_question(request: QuestionRequest):

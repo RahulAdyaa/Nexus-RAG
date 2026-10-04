@@ -45,7 +45,7 @@ const Upload = ({ onUploadSuccess }) => {
     setUploadStatus('Uploading and processing...');
 
     try {
-      const response = await uploadPDFs(files);
+      const response = await uploadPDFs(files, (msg) => setUploadStatus(msg));
       setUploadStatus(`Processed ${response.files_processed} files (${response.total_chunks} chunks)`);
       setFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = '';
