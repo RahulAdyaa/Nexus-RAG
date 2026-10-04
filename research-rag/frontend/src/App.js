@@ -44,7 +44,9 @@ function App() {
       answer: answer.answer,
       sources: answer.sources,
       confidence: answer.confidence,
-      timestamp: new Date().toLocaleTimeString()
+      timestamp: new Date().toLocaleTimeString(),
+      session: currentSession,
+      selectedDocuments: selectedDocuments
     };
     
     setChatHistory(prev => [newEntry, ...prev]);
@@ -99,7 +101,12 @@ function App() {
           {chatHistory.map(entry => (
             <div 
               key={entry.id} 
-              onClick={() => { setCurrentAnswer({ answer: entry.answer, sources: entry.sources, confidence: entry.confidence }); setStreamingAnswer(null); }}
+              onClick={() => { 
+                setCurrentAnswer({ answer: entry.answer, sources: entry.sources, confidence: entry.confidence }); 
+                setStreamingAnswer(null); 
+                setCurrentSession(entry.session || null);
+                if (entry.selectedDocuments) setSelectedDocuments(entry.selectedDocuments);
+              }}
               className="cursor-pointer p-3 rounded-md border border-transparent hover:border-zinc-800 hover:bg-zinc-900 transition-all group"
             >
               <div className="text-sm font-medium text-zinc-300 line-clamp-1 mb-1 group-hover:text-white transition-colors">{entry.question}</div>
@@ -178,6 +185,8 @@ function App() {
              onSelectionChange={setSelectedDocuments}
              onDocumentDeleted={() => setSidebarRefreshTrigger(prev => prev + 1)}
              onDocumentsLoaded={handleDocumentsLoaded}
+             activeSession={currentSession}
+             selectedFilenames={selectedDocuments}
            />
         </div>
       </aside>

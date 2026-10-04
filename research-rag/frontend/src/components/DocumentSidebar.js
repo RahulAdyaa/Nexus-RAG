@@ -1,11 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { getDocuments, deleteDocument } from '../services/api';
 
-const DocumentSidebar = ({ refreshTrigger, onSelectionChange, onDocumentDeleted, onDocumentsLoaded }) => {
+const DocumentSidebar = ({ refreshTrigger, onSelectionChange, onDocumentDeleted, onDocumentsLoaded, activeSession, selectedFilenames }) => {
   const [documents, setDocuments] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
+
+  useEffect(() => {
+    if (selectedFilenames && documents.length > 0) {
+      const ids = documents.filter(doc => selectedFilenames.includes(doc.filename)).map(doc => doc.id);
+      setSelectedIds(new Set(ids));
+    }
+  }, [selectedFilenames, documents]);
 
   useEffect(() => {
     const fetchDocuments = async () => {
@@ -86,57 +93,80 @@ const DocumentSidebar = ({ refreshTrigger, onSelectionChange, onDocumentDeleted,
              <p className="text-[10px] text-zinc-600">Upload PDF documents to query them.</p>
           </div>
         ) : (
-          <div className="flex flex-col gap-2">
-            {documents.map(doc => {
-              const isSelected = selectedIds.has(doc.id);
-              return (
-                <div 
-                  key={doc.id} 
-                  className={`group relative overflow-hidden flex items-center justify-between p-3 rounded-lg border transition-all cursor-pointer ${
-                    isSelected 
-                      ? 'bg-zinc-900 border-zinc-700' 
-                      : 'bg-[#0A0A0A] border-zinc-800 hover:border-zinc-700'
-                  }`}
-                  onClick={() => handleCheckboxChange(doc.id)}
-                >
-                  <div className="flex items-center gap-3 overflow-hidden">
-                    <div className={`shrink-0 w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${
-                      isSelected ? 'bg-white border-white' : 'bg-transparent border-zinc-700 group-hover:border-zinc-500'
-                    }`}>
-                      {isSelected && <svg className="w-2.5 h-2.5 text-black" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>}
-                    </div>
-                    
-                    <div className="flex flex-col overflow-hidden">
-                      <span className={`text-[11px] font-medium truncate transition-colors ${isSelected ? 'text-white' : 'text-zinc-400 group-hover:text-zinc-300'}`}>
-                        {doc.filename}
-                      </span>
-                      <div className="flex items-center gap-1.5 text-[9px] text-zinc-600 mt-0.5">
-                        <span className="flex items-center gap-1"><svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg> {doc.total_pages} p</span>
-                        <span>•</span>
-                        <span>{formatFileSize(doc.file_size)}</span>
+          <div className="flex flex-col gap-4">
+            {(() => {
+              const sessionFilenames = new Set(activeSession?.uploaded_files || []);
+              const sessionDocs = documents.filter(doc => sessionFilenames.has(doc.filename));
+              const otherDocs = documents.filter(doc => !sessionFilenames.has(doc.filename));
+
+              const renderDoc = (doc) => {
+                const isSelected = selectedIds.has(doc.id);
+                return (
+                  <div 
+                    key={doc.id} 
+                    className={`group relative overflow-hidden flex items-center justify-between p-3 rounded-lg border transition-all cursor-pointer ${
+                      isSelected 
+                        ? 'bg-zinc-900 border-zinc-700' 
+                        : 'bg-[#0A0A0A] border-zinc-800 hover:border-zinc-700'
+                    }`}
+                    onClick={() => handleCheckboxChange(doc.id)}
+                  >
+                    <div className="flex items-center gap-3 overflow-hidden">
+                      <div className={`shrink-0 w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${
+                        isSelected ? 'bg-white border-white' : 'bg-transparent border-zinc-700 group-hover:border-zinc-500'
+                      }`}>
+                        {isSelected && <svg className="w-2.5 h-2.5 text-black" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>}
+                      </div>
+                      
+                      <div className="flex flex-col overflow-hidden">
+                        <span className={`text-[11px] font-medium truncate transition-colors ${isSelected ? 'text-white' : 'text-zinc-400 group-hover:text-zinc-300'}`}>
+                          {doc.filename}
+                        </span>
+                        <div className="flex items-center gap-1.5 text-[9px] text-zinc-600 mt-0.5">
+                          <span className="flex items-center gap-1"><svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg> {doc.total_pages} p</span>
+                          <span>•</span>
+                          <span>{formatFileSize(doc.file_size)}</span>
+                        </div>
                       </div>
                     </div>
+                    
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (window.confirm(`Are you sure you want to delete ${doc.filename}?`)) {
+                          handleDelete(doc.id);
+                        }
+                      }}
+                      className={`shrink-0 w-6 h-6 rounded flex items-center justify-center transition-all ${
+                        isSelected 
+                          ? 'opacity-100 bg-zinc-800 text-zinc-400 hover:bg-red-900/30 hover:text-red-500' 
+                          : 'opacity-0 group-hover:opacity-100 hover:bg-red-900/30 hover:text-red-500 text-zinc-600'
+                      }`}
+                      title="Delete document"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    </button>
                   </div>
-                  
-                  <button 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (window.confirm(`Are you sure you want to delete ${doc.filename}?`)) {
-                        handleDelete(doc.id);
-                      }
-                    }}
-                    className={`shrink-0 w-6 h-6 rounded flex items-center justify-center transition-all ${
-                      isSelected 
-                        ? 'opacity-100 bg-zinc-800 text-zinc-400 hover:bg-red-900/30 hover:text-red-500' 
-                        : 'opacity-0 group-hover:opacity-100 hover:bg-red-900/30 hover:text-red-500 text-zinc-600'
-                    }`}
-                    title="Delete document"
-                  >
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                  </button>
-                </div>
+                );
+              };
+
+              return (
+                <>
+                  {sessionDocs.length > 0 && (
+                    <div className="flex flex-col gap-2">
+                      <h4 className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-1">Current Chat Documents</h4>
+                      {sessionDocs.map(renderDoc)}
+                    </div>
+                  )}
+                  {otherDocs.length > 0 && (
+                    <div className="flex flex-col gap-2">
+                      <h4 className="text-[10px] font-semibold text-zinc-600 uppercase tracking-wider mb-1 mt-2">Repository</h4>
+                      {otherDocs.map(renderDoc)}
+                    </div>
+                  )}
+                </>
               );
-            })}
+            })()}
           </div>
         )}
       </div>

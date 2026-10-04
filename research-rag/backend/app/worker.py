@@ -7,7 +7,7 @@ from .utils.config import config
 from .services.pdf_loader import PDFLoader
 from .services.text_splitter import TextSplitter
 from .services.retriever import HybridRetriever
-from .database.chroma_store import ChromaStore
+from .database.sqlite_store import SQLiteStore
 
 # Initialize Celery
 # Default Redis port is 6379 on localhost
@@ -20,8 +20,8 @@ celery_app = Celery(
 # Initialize RAG components globally for the worker process
 pdf_loader = PDFLoader()
 text_splitter = TextSplitter()
-db_store = ChromaStore()
-retriever = HybridRetriever(db_store=db_store)
+db_store = SQLiteStore()
+retriever = HybridRetriever()
 
 @celery_app.task(name="process_documents_task")
 def process_documents_task(file_metadata_list: List[dict], session_id: str):

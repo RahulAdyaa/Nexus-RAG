@@ -24,5 +24,9 @@ RUN mkdir -p uploads chroma_db
 # Expose port
 EXPOSE 8000
 
-# Command to run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Copy startup script and make it executable
+COPY start.sh .
+RUN chmod +x start.sh
+
+# Command to run the application (starts Celery + Uvicorn)
+CMD ["./start.sh"]
