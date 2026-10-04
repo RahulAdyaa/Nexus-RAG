@@ -72,7 +72,7 @@ function App() {
             <div className="w-8 h-8 rounded-md bg-white text-black flex items-center justify-center">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
             </div>
-            <h1 className="text-xl font-bold text-white tracking-tight">Nexus</h1>
+            <h1 className="text-xl font-bold text-white tracking-tight">Retriv</h1>
           </div>
           <p className="text-xs text-zinc-500 font-medium tracking-wide">RESEARCH ASSISTANT</p>
         </div>
