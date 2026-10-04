@@ -1,303 +1,106 @@
-# Multi-Document RAG With Hybrid Retrieval
+# Nexus-RAG
 
-An advanced retrieval-augmented generation (RAG) system that enables users to upload documents and query them using natural language. The platform combines hybrid retrieval algorithms with large language models to deliver precise, context-aware answers with full source attribution and session-based document management.
+Nexus-RAG is a highly advanced, full-stack Retrieval-Augmented Generation (RAG) application. It allows users to upload PDF documents, intelligently chunk and embed the text, and perform highly accurate Question & Answering over the documents using a Hybrid Search (BM25 + ChromaDB Vectors) followed by a Cross-Encoder Reranking process.
 
-## Features
+## 🚀 Key Features
 
-- **Multi-PDF Upload**: Upload and process multiple PDF documents simultaneously
-- **Hybrid Retrieval Engine**: Combines BM25 (keyword-based) and semantic embeddings for optimal search accuracy
-- **Session-Based Querying**: Intelligent document scoping with session isolation and filtering
-- **AI-Powered Q&A**: Uses Google Gemini API for intelligent answer generation with context
-- **Source Attribution**: Complete citations with document references, page numbers, and relevance scores
-- **Real-Time Processing**: Instant document ingestion with chunking and embedding generation
-- **Customizable Search**: Adjustable retrieval weights and search parameters (BM25 vs embeddings)
-- **Modern UI**: Clean, responsive React interface with professional research-focused design
-- **RESTful API**: Complete API for integration and automation
-- **Dashboard Analytics**: View uploaded documents, system statistics, and performance metrics
+- **True Hybrid Retrieval:** Combines keyword search (BM25) and semantic search (ChromaDB + SentenceTransformers).
+- **Cross-Encoder Reranking:** Ensures maximum precision by rescoring query/document pairs before sending them to the LLM.
+- **LLM Agnostic:** Supports local inference via Ollama, or cloud inference via Groq, Google Gemini, and OpenRouter.
+- **Streaming Responses:** Provides real-time streaming of LLM tokens via Server-Sent Events (SSE).
+- **Query Expansion:** Automatically expands user queries into 2-3 variations to maximize document recall.
+- **Smart Text Chunking:** Preserves semantic meaning using regex boundary protection for academic abbreviations and decimals.
 
-## 🏗️ How It Works
+## 🏗️ System Architecture
 
-### Document Ingestion Pipeline
+### Document Ingestion Flow
+```mermaid
+graph TD
+    classDef process fill:#059669,stroke:#333,stroke-width:2px,color:#fff
+    classDef storage fill:#F59E0B,stroke:#333,stroke-width:2px,color:#fff
+    classDef error fill:#EF4444,stroke:#333,stroke-width:2px,color:#fff
 
-1. **Document Upload**: PDF files are uploaded through the web interface or API
-2. **Text Extraction**: PyMuPDF extracts text content while preserving structure and metadata
-3. **Intelligent Chunking**: Text is split into semantic chunks (500 tokens) with overlap for context preservation
-4. **Dual Indexing**: 
-   - **BM25 Index**: Traditional keyword-based search for exact matches
-   - **Vector Embeddings**: Semantic embeddings using Sentence Transformers
-5. **Metadata Storage**: Document metadata, chunks, and relationships stored in SQLite
-6. **Vector Database**: Embeddings indexed in ChromaDB for fast similarity search
-
-### Query Processing Engine
-
-1. **Natural Language Input**: Users submit questions through the chat interface
-2. **Hybrid Search**: 
-   - Query processed through both BM25 and embedding models
-   - Results combined using configurable weights (default: 50/50)
-   - Advanced filtering by session, document scope, or recency
-3. **Context Retrieval**: Top-K most relevant chunks retrieved with metadata
-4. **Relevance Scoring**: Multi-factor scoring including semantic similarity and keyword matching
-
-### Answer Generation
-
-1. **Context Synthesis**: Retrieved chunks passed to Google Gemini LLM
-2. **Intelligent Response**: LLM generates comprehensive answers using provided context
-3. **Source Attribution**: Automatic citation with document names, page numbers, and relevance scores
-4. **Response Formatting**: Structured output with answer, sources, and metadata
-
-<br>
-   <img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/de660578-3664-4ca3-bc1c-2530e801d589" />
-
-
-
-## 🛠️ Technical Architecture
-
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   React Frontend │    │  FastAPI Backend │    │  Storage Layer  │
-│                 │    │                 │    │                 │
-│ • Upload UI     │◄──►│ • PDF Processing│◄──►│ • ChromaDB      │
-│ • Chat Interface│    │ • Hybrid Search │    │ • SQLite        │
-│ • Dashboard     │    │ • LLM Integration│    │ • File System   │
-│ • Session Mgmt  │    │ • Session Logic │    │ • BM25 Index    │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
+    User((User)) --> |"1. Upload PDF"| API["API Endpoint<br/>POST /upload"]:::process
+    API --> |"2. Save raw bytes"| FS[("Local Filesystem<br/>(uploads/)")]:::storage
+    API --> |"3. Extract text"| Loader["PDF Loader<br/>(PyMuPDF)"]:::process
+    Loader --> |"4. Clean & normalize"| Preprocessor["Text Preprocessor"]:::process
+    Preprocessor --> |"5. Split text"| Chunking["Text Splitter<br/>(tiktoken)"]:::process
+    Chunking --> |"6. Add metadata"| SQLite[("SQLite<br/>(Metadata)")]:::storage
+    Chunking --> |"7. Distribute"| Retriever["Hybrid Retriever"]:::process
+    Retriever --> |"8. Vectorize"| Embedder["Embedding Service"]:::process
+    Embedder --> Chroma[("ChromaDB<br/>(Vectors)")]:::storage
+    Retriever --> BM25["BM25 Indexer"]:::process
+    BM25 --> Pickle[("BM25 Pickle")]:::storage
 ```
 
-### Core Components
+### Question Answering Flow
+```mermaid
+graph TD
+    classDef process fill:#059669,stroke:#333,stroke-width:2px,color:#fff
+    classDef storage fill:#F59E0B,stroke:#333,stroke-width:2px,color:#fff
+    classDef external fill:#8B5CF6,stroke:#333,stroke-width:2px,color:#fff
 
-- **Frontend**: React 18 with modern hooks and responsive design
-- **Backend**: FastAPI with async support and automatic API documentation
-- **Vector Database**: ChromaDB for high-performance similarity search
-- **Search Engine**: rank-bm25 for traditional keyword matching
-- **Embeddings**: Sentence Transformers (all-MiniLM-L6-v2) for semantic understanding
-- **LLM**: Google Gemini API for answer generation
-- **Storage**: SQLite for metadata and session management
-
-## 📁 Project Structure
-
-```
-research-rag/
-├── frontend/                   # React application
-│   ├── src/
-│   │   ├── components/         # Reusable UI components
-│   │   │   ├── Upload.js       # File upload interface
-│   │   │   ├── Chatbox.js      # Query input and processing
-│   │   │   └── Answer.js       # Response display with sources
-│   │   ├── pages/              # Main application pages
-│   │   │   └── Home.js         # Dashboard and analytics
-│   │   ├── services/           # API integration
-│   │   │   └── api.js          # HTTP client and endpoints
-│   │   └── styles/             # Component styling
-│   ├── package.json            # Dependencies and scripts
-│   └── Dockerfile              # Container configuration
-├── backend/                    # Python FastAPI server
-│   ├── app/
-│   │   ├── main.py             # FastAPI application and routes
-│   │   ├── services/           # Core business logic
-│   │   │   ├── pdf_loader.py   # Document parsing and extraction
-│   │   │   ├── text_splitter.py# Intelligent text chunking
-│   │   │   ├── bm25_index.py   # Keyword search implementation
-│   │   │   ├── embeddings.py   # Vector embedding generation
-│   │   │   ├── retriever.py    # Hybrid search orchestration
-│   │   │   └── llm.py          # LLM integration and prompting
-│   │   ├── database/           # Data persistence layer
-│   │   │   ├── chroma_store.py # Vector database operations
-│   │   │   └── sqlite_store.py # Metadata and session storage
-│   │   └── utils/              # Shared utilities
-│   │       ├── config.py       # Environment configuration
-│   │       └── preprocessing.py# Text processing utilities
-│   ├── requirements.txt        # Python dependencies
-│   ├── Dockerfile              # Container configuration
-│   └── .env                    # Environment variables
-├── docker-compose.yml          # Multi-container orchestration
-└── README.md                   # Project documentation
+    User((User)) --> |"1. Question"| API["API Endpoint<br/>POST /ask"]:::process
+    API --> Expander["Query Expansion<br/>(LLM Service)"]:::process
+    Expander --> Hybrid["Hybrid Retriever"]:::process
+    Hybrid --> BM25Search["BM25 Search"]:::process
+    Hybrid --> EmbSearch["Vector Search"]:::process
+    BM25Search & EmbSearch --> ScoreCombiner["Score Combiner"]:::process
+    ScoreCombiner --> Reranker["Cross-Encoder Reranker"]:::process
+    Reranker --> ContextFilter["Relevance Filter"]:::process
+    ContextFilter --> PromptBuilder["Prompt Builder"]:::process
+    PromptBuilder --> LLMRoute{"LLM Provider"}
+    LLMRoute --> LocalLLM["Ollama / Gemini / Groq"]:::external
+    LocalLLM --> Formatter["Response Formatter"]:::process
+    Formatter --> User
 ```
 
-## 🚀 Installation & Setup
+## 🛠️ Tech Stack
 
-### Prerequisites
+- **Frontend:** React, Tailwind CSS
+- **Backend:** FastAPI (Python), PyMuPDF, TikToken
+- **Machine Learning:** SentenceTransformers (BAAI/bge-small-en for embeddings), CrossEncoder for reranking
+- **Databases:** ChromaDB (Vector), SQLite (Relational), rank_bm25 (Keyword)
+- **Deployment:** Vercel (Frontend), Render/Railway (Backend API)
 
-- **Python 3.10+** with pip
-- **Node.js 18+** with npm
-- **Google Gemini API Key** ([Get one here](https://makersuite.google.com/app/apikey))
-- **Docker** (optional, for containerized deployment)
+## ⚙️ Local Setup
 
-### Method 1: Local Development
-
-#### Backend Setup
-
+### 1. Backend Setup
+Navigate to the `backend/` directory:
 ```bash
-# Clone the repository
-git clone https://github.com/Avishi2511/research-rag.git
-cd research-rag/backend
-
-# Create virtual environment
+cd backend
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
+source venv/bin/activate
 pip install -r requirements.txt
-
-# Configure environment variables
-cp .env.example .env
-# Edit .env with your Gemini API key
 ```
 
-**Environment Configuration (.env):**
+Create a `.ENV` file in the `backend/` directory with the necessary keys (DO NOT commit this file to GitHub):
 ```env
-GEMINI_API_KEY=your_gemini_api_key_here
-UPLOAD_DIR=./uploads
-CHROMA_DB_PATH=./chroma_db
-SQLITE_DB_PATH=./metadata.db
+# Example .ENV
+LLM_PROVIDER=gemini # ollama | gemini | groq | openrouter
+GEMINI_API_KEY=your_key_here
+GEMINI_MODEL=gemini-1.5-pro
+
+GROQ_API_KEY=your_key_here
+GROQ_MODEL=llama3-70b-8192
+
+OLLAMA_URL=http://localhost:11434
+OLLAMA_MODEL=llama3
+
+EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
 ```
 
+Start the backend server:
 ```bash
-# Start the backend server
-python -m app.main
-# Server available at http://localhost:8000
-# API docs at http://localhost:8000/docs
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-#### Frontend Setup
-
+### 2. Frontend Setup
+Navigate to the `frontend/` directory:
 ```bash
-# Navigate to frontend directory
-cd ../frontend
-
-# Install dependencies
+cd frontend
 npm install
-
-# Start development server
 npm start
-# Application available at http://localhost:3000
 ```
-
-### Method 2: Docker Deployment
-
-```bash
-# Clone and navigate to project
-git clone https://github.com/Avishi2511/research-rag.git
-cd research-rag
-
-# Configure environment
-cp backend/.env.example backend/.env
-# Edit backend/.env with your API keys
-
-# Build and run with Docker Compose
-docker-compose up --build
-
-# Access the application
-# Frontend: http://localhost:3000
-# Backend API: http://localhost:8000
-# API Documentation: http://localhost:8000/docs
-```
-
-
-## 🔧 API Reference
-
-### Core Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/upload` | Upload and process PDF documents |
-| `POST` | `/ask` | Submit questions and get AI-generated answers |
-| `GET` | `/documents` | List all uploaded documents |
-| `GET` | `/stats` | Get system statistics and metrics |
-| `GET` | `/health` | Health check and system status |
-| `DELETE` | `/clear` | Clear all data and reset system |
-
-### Request/Response Examples
-
-**Upload Documents:**
-```json
-// Request: POST /upload (multipart/form-data)
-// Response:
-{
-  "message": "Successfully processed 2 files with 45 chunks",
-  "files_processed": 2,
-  "total_chunks": 45,
-  "success": true,
-  "session_id": "uuid-string",
-  "uploaded_files": ["document1.pdf", "document2.pdf"]
-}
-```
-
-**Ask Question:**
-```json
-// Request: POST /ask
-{
-  "question": "What is the methodology used in the study?",
-  "top_k": 5,
-  "bm25_weight": 0.5,
-  "embedding_weight": 0.5,
-  "search_scope": "session",
-  "session_id": "uuid-string"
-}
-
-// Response:
-{
-  "answer": "The study employs a mixed-methods approach...",
-  "sources": [
-    {
-      "source": "research_paper.pdf",
-      "page": 3,
-      "content": "Our methodology combines quantitative...",
-      "relevance_score": 0.89
-    }
-  ],
-  "context_used": 3,
-  "success": true
-}
-```
-
-## ⚙️ Configuration & Tuning
-
-### Retrieval Parameters
-
-```python
-# Adjust search weights for different use cases
-{
-  "bm25_weight": 0.7,      # Higher for keyword-heavy queries
-  "embedding_weight": 0.3,  # Lower for exact term matching
-  "top_k": 10              # More context for complex questions
-}
-
-# For semantic queries
-{
-  "bm25_weight": 0.3,      # Lower for conceptual queries
-  "embedding_weight": 0.7,  # Higher for semantic understanding
-  "top_k": 5               # Focused context
-}
-```
-
-### Text Processing Settings
-
-- **Chunk Size**: 500 tokens (optimal for most documents)
-- **Chunk Overlap**: 50 tokens (maintains context continuity)
-- **Embedding Model**: `sentence-transformers/all-MiniLM-L6-v2`
-- **Max Document Size**: 50MB per file
-
-### Performance Optimization
-
-```env
-# Environment variables for optimization
-CHUNK_SIZE=500
-CHUNK_OVERLAP=50
-MAX_CONCURRENT_UPLOADS=5
-EMBEDDING_BATCH_SIZE=32
-VECTOR_SEARCH_TIMEOUT=30
-```
-
-
-### Development Setup
-
-```bash
-# Fork the repository
-git clone https://github.com/yourusername/research-rag.git
-
-# Create feature branch
-git checkout -b feature/your-feature-name
-
-# Make changes and test
-# Submit pull request
-```
+The React app will proxy requests to the FastAPI backend running on port 8000.
