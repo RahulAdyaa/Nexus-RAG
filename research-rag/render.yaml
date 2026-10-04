@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: research-rag-backend
+    env: docker
+    rootDir: backend
+    plan: free
+    disk:
+      name: rag-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: LLM_PROVIDER
+        value: groq
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: UPLOAD_DIR
+        value: /data/uploads
+      - key: CHROMA_DB_PATH
+        value: /data/chroma_db
+      - key: SQLITE_DB_PATH
+        value: /data/metadata.db

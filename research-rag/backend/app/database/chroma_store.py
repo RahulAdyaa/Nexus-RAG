@@ -4,7 +4,8 @@ import numpy as np
 import os
 from typing import List, Dict, Tuple, Optional
 import uuid
-from ..utils.config import config
+# pyrefly: ignore [missing-import]
+from app.utils.config import config
 
 class ChromaStore:
     def __init__(self, db_path: str = None):
@@ -168,6 +169,15 @@ class ChromaStore:
         if self.collection:
             self.client.delete_collection(name=self.collection_name)
             self.collection = None
+            
+    def delete_by_source_file(self, source_file: str):
+        """Delete all chunks from a specific source file"""
+        if not self.collection:
+            return
+        try:
+            self.collection.delete(where={"source_file": {"$eq": source_file}})
+        except Exception as e:
+            print(f"Error deleting from Chroma: {str(e)}")
     
     def reset_collection(self):
         """Reset collection (delete and recreate)"""

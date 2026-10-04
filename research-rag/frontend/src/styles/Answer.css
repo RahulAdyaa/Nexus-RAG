@@ -44,11 +44,57 @@
   margin-bottom: 2rem;
 }
 
+.answer-content h1,
+.answer-content h2,
+.answer-content h3,
+.answer-content h4 {
+  color: #2d3748;
+  margin-top: 1.2rem;
+  margin-bottom: 0.5rem;
+}
+
+.answer-content h3 { font-size: 1.15rem; }
+.answer-content h4 { font-size: 1.05rem; }
+
 .answer-content p {
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   line-height: 1.7;
   color: #2d3748;
-  white-space: pre-wrap;
+  margin-bottom: 0.75rem;
+}
+
+.answer-content ul,
+.answer-content ol {
+  padding-left: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.answer-content li {
+  font-size: 1.05rem;
+  line-height: 1.7;
+  color: #2d3748;
+  margin-bottom: 0.4rem;
+}
+
+.answer-content strong {
+  color: #1a365d;
+  font-weight: 600;
+}
+
+.answer-content code {
+  background: #edf2f7;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  color: #c53030;
+}
+
+.answer-content blockquote {
+  border-left: 4px solid #2c5282;
+  padding-left: 1rem;
+  margin: 0.75rem 0;
+  color: #4a5568;
+  font-style: italic;
 }
 
 .sources-section {
@@ -115,6 +161,24 @@
   gap: 0.5rem;
 }
 
+.source-file-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
+  padding: 0.25rem 0;
+  border-radius: 4px;
+  transition: opacity 0.2s;
+}
+
+.source-file-link:hover {
+  opacity: 0.8;
+}
+
+.source-file-link:hover .source-file {
+  text-decoration: underline;
+}
+
 .source-file {
   font-weight: 600;
   color: #1e3a5f;
@@ -170,4 +234,80 @@
     flex-direction: column;
     align-items: flex-start;
   }
+}
+
+/* Streaming indicator */
+.streaming-badge {
+  color: #38a169;
+  font-size: 0.85rem;
+  font-weight: 500;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Blinking typing cursor */
+.typing-cursor {
+  animation: blink 0.7s step-end infinite;
+  color: #2c5282;
+  font-weight: bold;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.suggestions-section {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #e2e8f0;
+}
+
+.suggestions-loading {
+  font-size: 0.9rem;
+  color: #718096;
+  font-style: italic;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.suggestions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.suggestions-label {
+  font-size: 0.9rem;
+  color: #4a5568;
+  font-weight: 600;
+}
+
+.suggestions-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.suggestion-pill {
+  background-color: #ebf8ff;
+  border: 1px solid #bee3f8;
+  color: #2b6cb0;
+  padding: 0.5rem 1rem;
+  border-radius: 9999px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+}
+
+.suggestion-pill:hover {
+  background-color: #bee3f8;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(66, 153, 225, 0.15);
 }

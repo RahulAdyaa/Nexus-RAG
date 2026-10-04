@@ -4,12 +4,32 @@ import os
 from typing import List, Dict, Tuple
 import json
 
+import re
+
+STOP_WORDS = {
+    'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your', 'yours', 'yourself', 'yourselves', 
+    'he', 'him', 'his', 'himself', 'she', 'her', 'hers', 'herself', 'it', 'its', 'itself', 'they', 'them', 'their', 
+    'theirs', 'themselves', 'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those', 'am', 'is', 'are', 
+    'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'a', 'an', 
+    'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', 'at', 'by', 'for', 'with', 'about', 
+    'against', 'between', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from', 'up', 
+    'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 
+    'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 
+    'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 'can', 'will', 'just', 'don', 
+    'should', 'now'
+}
+
 class BM25Index:
     def __init__(self, index_path: str = "./bm25_index.pkl"):
         self.index_path = index_path
         self.corpus = []
         self.bm25 = None
         self.chunk_metadata = []
+        
+    def _tokenize(self, text: str) -> List[str]:
+        """Tokenize text by extracting alphanumeric words and removing stop words"""
+        words = re.findall(r'\b[a-z0-9]+\b', text.lower())
+        return [w for w in words if w not in STOP_WORDS]
         
     def build_index(self, chunks: List[Dict]):
         """Build BM25 index from text chunks"""
@@ -18,8 +38,8 @@ class BM25Index:
         self.chunk_metadata = []
         
         for chunk in chunks:
-            # Simple tokenization (you can improve this)
-            tokens = chunk["text"].lower().split()
+            # Better tokenization with stopword removal
+            tokens = self._tokenize(chunk["text"])
             corpus.append(tokens)
             self.chunk_metadata.append(chunk["metadata"])
         
@@ -64,7 +84,7 @@ class BM25Index:
             return []
         
         # Tokenize query
-        query_tokens = query.lower().split()
+        query_tokens = self._tokenize(query)
         
         # Get scores
         scores = self.bm25.get_scores(query_tokens)
@@ -126,7 +146,7 @@ class BM25Index:
         """Add new chunks to existing index"""
         # Add to corpus
         for chunk in new_chunks:
-            tokens = chunk["text"].lower().split()
+            tokens = self._tokenize(chunk["text"])
             self.corpus.append(tokens)
             
             # Include session_id in metadata if present
@@ -138,4 +158,25 @@ class BM25Index:
         
         # Rebuild index
         self.bm25 = BM25Okapi(self.corpus)
+        self.save_index()
+
+    def delete_by_source_file(self, source_file: str):
+        """Delete all chunks from a specific source file and rebuild index"""
+        new_corpus = []
+        new_metadata = []
+        
+        for i, meta in enumerate(self.chunk_metadata):
+            if meta.get("source_file") != source_file:
+                new_corpus.append(self.corpus[i])
+                new_metadata.append(meta)
+                
+        if len(new_corpus) == len(self.corpus):
+            return  # No change
+            
+        self.corpus = new_corpus
+        self.chunk_metadata = new_metadata
+        if self.corpus:
+            self.bm25 = BM25Okapi(self.corpus)
+        else:
+            self.bm25 = None
         self.save_index()

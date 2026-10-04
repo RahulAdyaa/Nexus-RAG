@@ -1,13 +1,15 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict
 import os
 import shutil
 import tempfile
 from datetime import datetime
 import uuid
+import time
 
 from .services.pdf_loader import PDFLoader
 from .services.text_splitter import TextSplitter
@@ -42,6 +44,9 @@ db_store = SQLiteStore()
 # Create upload directory
 os.makedirs(config.UPLOAD_DIR, exist_ok=True)
 
+# Mount the uploads directory to serve PDFs
+app.mount("/uploads", StaticFiles(directory=config.UPLOAD_DIR), name="uploads")
+
 # Pydantic models
 class QuestionRequest(BaseModel):
     question: str
@@ -51,12 +56,17 @@ class QuestionRequest(BaseModel):
     search_scope: Optional[str] = "session"  # "session", "selected", "all"
     selected_documents: Optional[List[str]] = None
     session_id: Optional[str] = None
+    chat_history: Optional[List[Dict[str, str]]] = []
+
+class SuggestRequest(BaseModel):
+    chat_history: List[Dict[str, str]]
 
 class QuestionResponse(BaseModel):
     answer: str
     sources: List[dict]
     context_used: int
     success: bool
+    confidence: Optional[str] = None
     error: Optional[str] = None
 
 class UploadResponse(BaseModel):
@@ -88,9 +98,25 @@ async def health_check():
             "timestamp": datetime.now().isoformat()
         }
 
+def cleanup_old_uploads():
+    """Remove PDF files older than 2 hours from the uploads cache to save space"""
+    try:
+        now = time.time()
+        max_age = 2 * 3600  # 2 hours
+        for filename in os.listdir(config.UPLOAD_DIR):
+            file_path = os.path.join(config.UPLOAD_DIR, filename)
+            if os.path.isfile(file_path):
+                if os.stat(file_path).st_mtime < now - max_age:
+                    os.remove(file_path)
+    except Exception as e:
+        print(f"Error during upload cache cleanup: {e}")
+
 @app.post("/upload", response_model=UploadResponse)
 async def upload_pdfs(files: List[UploadFile] = File(...)):
     try:
+        # Run cache cleanup on each upload
+        cleanup_old_uploads()
+        
         if not files:
             raise HTTPException(status_code=400, detail="No files provided")
         
@@ -106,13 +132,14 @@ async def upload_pdfs(files: List[UploadFile] = File(...)):
             if not file.filename.lower().endswith('.pdf'):
                 continue
             
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
-                shutil.copyfileobj(file.file, temp_file)
-                temp_path = temp_file.name
+            # Save file to uploads directory persistently
+            file_path = os.path.join(config.UPLOAD_DIR, file.filename)
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
             
             try:
                 # Pass the original filename to preserve it in metadata
-                pages_data = pdf_loader.extract_text_from_pdf(temp_path, file.filename)
+                pages_data = pdf_loader.extract_text_from_pdf(file_path, file.filename)
                 if not pages_data:
                     continue
                 
@@ -127,7 +154,7 @@ async def upload_pdfs(files: List[UploadFile] = File(...)):
                     processed_files += 1
                     uploaded_files.append(file.filename)
                     
-                    file_size = os.path.getsize(temp_path)
+                    file_size = os.path.getsize(file_path)
                     db_store.add_document(
                         filename=file.filename,
                         total_pages=len(pages_data),
@@ -137,8 +164,9 @@ async def upload_pdfs(files: List[UploadFile] = File(...)):
                     )
                     db_store.add_chunks(chunks)
                 
-            finally:
-                os.unlink(temp_path)
+            except Exception as e:
+                print(f"Error processing {file.filename}: {e}")
+
         
         if all_chunks:
             retriever.add_documents(all_chunks)
@@ -169,12 +197,16 @@ async def ask_question(request: QuestionRequest):
             filter_criteria = {"source": {"$in": request.selected_documents}}
         # For "all" scope, no filter is applied (filter_criteria remains None)
         
+        # Expand the query using LLM for better recall
+        expanded_queries = llm_service.expand_query(request.question)
+
         retrieved_chunks = retriever.hybrid_search(
             query=request.question,
             top_k=request.top_k,
             bm25_weight=request.bm25_weight,
             embedding_weight=request.embedding_weight,
-            filter_criteria=filter_criteria
+            filter_criteria=filter_criteria,
+            expanded_queries=expanded_queries
         )
         
         if not retrieved_chunks:
@@ -193,7 +225,8 @@ async def ask_question(request: QuestionRequest):
         
         llm_response = llm_service.generate_answer(
             query=request.question,
-            context_chunks=retrieved_chunks
+            context_chunks=retrieved_chunks,
+            chat_history=request.chat_history
         )
         
         return QuestionResponse(
@@ -201,11 +234,67 @@ async def ask_question(request: QuestionRequest):
             sources=llm_response["sources"],
             context_used=llm_response["context_used"],
             success=llm_response["success"],
+            confidence=llm_response.get("confidence", "Low"),
             error=llm_response.get("error")
         )
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing question: {str(e)}")
+
+@app.post("/ask/stream")
+async def ask_question_stream(request: QuestionRequest):
+    """Stream answer tokens via Server-Sent Events for instant-feeling responses"""
+    try:
+        if not request.question.strip():
+            raise HTTPException(status_code=400, detail="Question cannot be empty")
+        
+        # Prepare filter criteria based on search scope
+        filter_criteria = None
+        if request.search_scope == "session" and request.session_id:
+            filter_criteria = {"session_id": request.session_id}
+        elif request.search_scope == "selected" and request.selected_documents:
+            filter_criteria = {"source": {"$in": request.selected_documents}}
+        
+        # Expand the query using LLM for better recall
+        expanded_queries = llm_service.expand_query(request.question)
+        
+        retrieved_chunks = retriever.hybrid_search(
+            query=request.question,
+            top_k=request.top_k,
+            bm25_weight=request.bm25_weight,
+            embedding_weight=request.embedding_weight,
+            filter_criteria=filter_criteria,
+            expanded_queries=expanded_queries
+        )
+        
+        if not retrieved_chunks:
+            import json
+            def empty_stream():
+                yield json.dumps({"type": "sources", "sources": [], "context_used": 0}) + "\n"
+                yield json.dumps({"type": "token", "content": "I couldn't find any relevant information to answer your question."}) + "\n"
+                yield json.dumps({"type": "done"}) + "\n"
+            return StreamingResponse(empty_stream(), media_type="text/event-stream")
+        
+        return StreamingResponse(
+            llm_service.generate_answer_stream(
+                query=request.question,
+                context_chunks=retrieved_chunks,
+                chat_history=request.chat_history
+            ),
+            media_type="text/event-stream"
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing question: {str(e)}")
+
+@app.post("/ask/suggest")
+async def suggest_followup_questions(request: SuggestRequest):
+    """Generate follow-up questions based on chat history"""
+    try:
+        suggestions = llm_service.generate_suggestions(request.chat_history)
+        return {"suggestions": suggestions}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating suggestions: {str(e)}")
 
 @app.get("/documents")
 async def get_documents():
@@ -222,6 +311,30 @@ async def get_session_documents(session_id: str):
         return {"session_id": session_id, "documents": documents}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving session documents: {str(e)}")
+
+@app.delete("/documents/{document_id}")
+async def delete_document(document_id: int):
+    try:
+        doc = db_store.get_document_by_id(document_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+            
+        filename = doc["filename"]
+        
+        # Delete from SQLite
+        db_store.delete_document(document_id)
+        
+        # Delete from Chroma and BM25
+        retriever.delete_document(filename)
+        
+        # Delete file from uploads directory
+        file_path = os.path.join(config.UPLOAD_DIR, filename)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            
+        return {"message": f"Document {filename} deleted successfully", "success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting document: {str(e)}")
 
 @app.get("/stats")
 async def get_stats():
@@ -242,6 +355,16 @@ async def get_stats():
 async def clear_all_data():
     try:
         retriever.clear_indices()
+        
+        # Also clear the uploads cache
+        for filename in os.listdir(config.UPLOAD_DIR):
+            file_path = os.path.join(config.UPLOAD_DIR, filename)
+            if os.path.isfile(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception:
+                    pass
+                
         return {"message": "All data cleared successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error clearing data: {str(e)}")

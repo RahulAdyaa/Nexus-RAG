@@ -1,7 +1,7 @@
 import sqlite3
 import json
 from typing import List, Dict, Optional
-from ..utils.config import config
+from app.utils.config import config
 
 class SQLiteStore:
     def __init__(self, db_path: str = None):
@@ -193,3 +193,38 @@ class SQLiteStore:
         
         conn.close()
         return chunk
+        
+    def get_document_by_id(self, document_id: int) -> Optional[Dict]:
+        """Get document metadata by ID"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM documents WHERE id = ?', (document_id,))
+        row = cursor.fetchone()
+        
+        if row:
+            doc = {
+                "id": row[0],
+                "filename": row[1],
+                "upload_date": row[2],
+                "total_pages": row[3],
+                "total_chunks": row[4],
+                "file_size": row[5],
+                "session_id": row[6]
+            }
+        else:
+            doc = None
+            
+        conn.close()
+        return doc
+        
+    def delete_document(self, document_id: int):
+        """Delete document and its chunks from database"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('DELETE FROM chunks WHERE document_id = ?', (document_id,))
+        cursor.execute('DELETE FROM documents WHERE id = ?', (document_id,))
+        
+        conn.commit()
+        conn.close()

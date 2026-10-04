@@ -2,6 +2,7 @@ from typing import List, Dict, Tuple
 import numpy as np
 from .bm25_index import BM25Index
 from .embeddings import EmbeddingService
+from .reranker import Reranker
 from ..database.chroma_store import ChromaStore
 from ..utils.config import config
 
@@ -10,6 +11,7 @@ class HybridRetriever:
         self.bm25_index = BM25Index(bm25_index_path)
         self.chroma_store = ChromaStore(chroma_db_path)
         self.embedding_service = EmbeddingService()
+        self.reranker = Reranker()
         
         # Load existing indices
         self.bm25_index.load_index()
@@ -41,9 +43,11 @@ class HybridRetriever:
         embeddings = self.embedding_service.generate_embeddings(texts)
         self.chroma_store.add_chunks(chunks, embeddings)
     
-    def hybrid_search(self, query: str, top_k: int = 5, bm25_weight: float = 0.5, embedding_weight: float = 0.5, filter_criteria: Dict = None) -> List[Dict]:
+    def hybrid_search(self, query: str, top_k: int = 5, bm25_weight: float = 0.5, embedding_weight: float = 0.5, filter_criteria: Dict = None, expanded_queries: List[str] = None) -> List[Dict]:
         """
-        Perform hybrid search combining BM25 and embedding similarity
+        Perform hybrid search combining BM25 and embedding similarity,
+        followed by cross-encoder reranking for maximum precision.
+        Supports query expansion by accepting multiple queries.
         
         Args:
             query: Search query
@@ -51,21 +55,42 @@ class HybridRetriever:
             bm25_weight: Weight for BM25 scores (0-1)
             embedding_weight: Weight for embedding scores (0-1)
             filter_criteria: Optional filter criteria for search
+            expanded_queries: Optional alternative queries to also search for
         
         Returns:
             List of ranked results with combined scores
         """
-        # Get BM25 results
-        bm25_results = self.bm25_index.search(query, top_k=top_k * 2, filter_criteria=filter_criteria)  # Get more to ensure diversity
+        # Fetch more candidates than needed for reranking
+        candidate_count = top_k * 3
         
-        # Get embedding results
-        query_embedding = self.embedding_service.generate_single_embedding(query)
-        embedding_results = self.chroma_store.search(query, top_k=top_k * 2, query_embedding=query_embedding, filter_criteria=filter_criteria)
+        all_queries = [query]
+        if expanded_queries:
+            all_queries.extend(expanded_queries)
+            
+        all_bm25_results = []
+        all_embedding_results = []
         
-        # Combine and score results
-        combined_results = self._combine_results(bm25_results, embedding_results, bm25_weight, embedding_weight)
+        for q in all_queries:
+            # Get BM25 results
+            bm25_res = self.bm25_index.search(q, top_k=candidate_count, filter_criteria=filter_criteria)
+            all_bm25_results.extend(bm25_res)
+            
+            # Get embedding results
+            query_emb = self.embedding_service.generate_query_embedding(q)
+            emb_res = self.chroma_store.search(q, top_k=candidate_count, query_embedding=query_emb, filter_criteria=filter_criteria)
+            all_embedding_results.extend(emb_res)
+            
+        # Combine and score results (it naturally handles deduplication)
+        combined_results = self._combine_results(all_bm25_results, all_embedding_results, bm25_weight, embedding_weight)
         
-        # Return top results
+        # Take top candidates for reranking (limit to 2x top_k to control latency)
+        candidates_for_reranking = combined_results[:top_k * 2]
+        
+        # Cross-encoder reranking for final precision
+        if candidates_for_reranking:
+            reranked = self.reranker.rerank(query, candidates_for_reranking, top_k=top_k)
+            return reranked
+        
         return combined_results[:top_k]
     
     def _combine_results(self, bm25_results: List[Tuple[Dict, float]], 
@@ -146,3 +171,8 @@ class HybridRetriever:
         """Clear both indices"""
         self.chroma_store.reset_collection()
         self.bm25_index = BM25Index()  # Reset BM25 index
+
+    def delete_document(self, source_file: str):
+        """Delete a document from both indices"""
+        self.chroma_store.delete_by_source_file(source_file)
+        self.bm25_index.delete_by_source_file(source_file)

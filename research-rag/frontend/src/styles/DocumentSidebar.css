@@ -1,0 +1,117 @@
+.document-sidebar {
+  width: 280px;
+  background-color: white;
+  border-left: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+  box-shadow: -2px 0 10px rgba(0, 0, 0, 0.05);
+  border-radius: 12px;
+}
+
+.document-sidebar h3 {
+  padding: 1.5rem;
+  margin: 0;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 1.3rem;
+  font-weight: 600;
+  color: #2d3748;
+  background-color: white;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.document-list {
+  padding: 1rem;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.doc-sidebar-hint {
+  font-size: 0.8rem;
+  color: #718096;
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px dashed #e2e8f0;
+}
+
+.document-item {
+  position: relative;
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background-color: white;
+  transition: all 0.2s ease;
+}
+
+.document-item.selected {
+  border-color: #2c5282;
+  background-color: rgba(44, 82, 130, 0.05);
+}
+
+.document-item:hover {
+  box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+}
+
+.doc-checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+  margin-bottom: 4px;
+}
+
+.doc-checkbox-label input[type="checkbox"] {
+  margin-top: 4px;
+  cursor: pointer;
+}
+
+.doc-name {
+  font-weight: 500;
+  font-size: 0.9rem;
+  word-break: break-word;
+  color: #2d3748;
+  padding-right: 20px; /* space for delete button */
+}
+
+.doc-meta {
+  font-size: 0.75rem;
+  color: #888;
+  margin-left: 22px; /* align with text, bypassing checkbox */
+}
+
+.doc-delete-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: none;
+  border: none;
+  color: #dc3545;
+  cursor: pointer;
+  font-size: 1rem;
+  opacity: 0.5;
+  transition: opacity 0.2s;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.doc-delete-btn:hover {
+  opacity: 1;
+  background-color: rgba(220, 53, 69, 0.1);
+}
+
+.doc-sidebar-loading,
+.doc-sidebar-error,
+.doc-sidebar-empty {
+  padding: 1.5rem;
+  text-align: center;
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.doc-sidebar-error {
+  color: #dc3545;
+}
