@@ -1,6 +1,6 @@
 import tiktoken
 from typing import List, Dict
-from ..utils.preprocessing import TextPreprocessor
+from app.utils.preprocessing import TextPreprocessor
 from ..utils.config import config
 
 class TextSplitter:

@@ -5,11 +5,11 @@ import chromadb
 from chromadb.config import Settings
 import numpy as np
 from typing import Optional, Dict
-from ..utils.config import config
+from app.utils.config import config
 
 class SemanticCache:
-    def __init__(self, db_path: str = None, threshold: float = 0.20):
-        # We use a slightly higher threshold (0.20 L2 distance) to allow variations in phrasing
+    def __init__(self, db_path: str = None, threshold: float = 0.40):
+        # We use a threshold of 0.40 L2 distance (approx 0.92 cosine similarity) to allow variations in phrasing
         self.db_path = db_path or os.path.join(config.CHROMA_DB_PATH, "semantic_cache")
         self.collection_name = "semantic_cache"
         self.threshold = threshold
