@@ -1,6 +1,6 @@
-# Nexus-RAG
+# Nexus-RAG 🧠
 
-Nexus-RAG is a highly advanced, full-stack Retrieval-Augmented Generation (RAG) application. It allows users to upload PDF documents, intelligently chunk and embed the text, and perform highly accurate Question & Answering over the documents using a Hybrid Search (BM25 + ChromaDB Vectors) followed by a Cross-Encoder Reranking process.
+Nexus-RAG is a highly advanced, full-stack Retrieval-Augmented Generation (RAG) application. It allows users to upload PDF documents, intelligently chunk and embed the text, and perform highly accurate Question & Answering over the documents using a True Hybrid Search (BM25 + ChromaDB Vectors) followed by a Cross-Encoder Reranking process.
 
 ## 🚀 Key Features
 
@@ -11,6 +11,8 @@ Nexus-RAG is a highly advanced, full-stack Retrieval-Augmented Generation (RAG) 
 - **Query Expansion:** Automatically expands user queries into 2-3 variations to maximize document recall.
 - **Smart Text Chunking:** Preserves semantic meaning using regex boundary protection for academic abbreviations and decimals.
 
+---
+
 ## 🏗️ System Architecture
 
 ### Document Ingestion Flow
@@ -18,7 +20,6 @@ Nexus-RAG is a highly advanced, full-stack Retrieval-Augmented Generation (RAG) 
 graph TD
     classDef process fill:#059669,stroke:#333,stroke-width:2px,color:#fff
     classDef storage fill:#F59E0B,stroke:#333,stroke-width:2px,color:#fff
-    classDef error fill:#EF4444,stroke:#333,stroke-width:2px,color:#fff
 
     User((User)) --> |"1. Upload PDF"| API["API Endpoint<br/>POST /upload"]:::process
     API --> |"2. Save raw bytes"| FS[("Local Filesystem<br/>(uploads/)")]:::storage
@@ -37,7 +38,6 @@ graph TD
 ```mermaid
 graph TD
     classDef process fill:#059669,stroke:#333,stroke-width:2px,color:#fff
-    classDef storage fill:#F59E0B,stroke:#333,stroke-width:2px,color:#fff
     classDef external fill:#8B5CF6,stroke:#333,stroke-width:2px,color:#fff
 
     User((User)) --> |"1. Question"| API["API Endpoint<br/>POST /ask"]:::process
@@ -55,52 +55,108 @@ graph TD
     Formatter --> User
 ```
 
-## 🛠️ Tech Stack
+---
+
+## 💻 Tech Stack
 
 - **Frontend:** React, Tailwind CSS
-- **Backend:** FastAPI (Python), PyMuPDF, TikToken
-- **Machine Learning:** SentenceTransformers (BAAI/bge-small-en for embeddings), CrossEncoder for reranking
-- **Databases:** ChromaDB (Vector), SQLite (Relational), rank_bm25 (Keyword)
-- **Deployment:** Vercel (Frontend), Render/Railway (Backend API)
+- **Backend:** FastAPI (Python), PyMuPDF, TikToken, Pydantic
+- **Machine Learning:** SentenceTransformers (`BAAI/bge-small-en-v1.5`), CrossEncoder (`ms-marco-MiniLM-L-6-v2`)
+- **Databases:** ChromaDB (Vector DB), SQLite (Relational Metadata), `rank_bm25` (Keyword Index)
 
-## ⚙️ Local Setup
+---
 
-### 1. Backend Setup
-Navigate to the `backend/` directory:
+## 🛠️ Step-by-Step Installation Guide
+
+Follow these instructions to run the project locally on your machine.
+
+### Prerequisites
+Make sure you have the following installed on your device:
+- **Python 3.9+** (For the FastAPI Backend)
+- **Node.js v16+ & npm** (For the React Frontend)
+- **Git** (To clone the repository)
+
+### 1. Clone the Repository
+Open your terminal and clone the repository:
 ```bash
-cd backend
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+git clone https://github.com/RahulAdyaa/Nexus-RAG.git
+cd Nexus-RAG
 ```
 
-Create a `.ENV` file in the `backend/` directory with the necessary keys (DO NOT commit this file to GitHub):
-```env
-# Example .ENV
-LLM_PROVIDER=gemini # ollama | gemini | groq | openrouter
-GEMINI_API_KEY=your_key_here
-GEMINI_MODEL=gemini-1.5-pro
+### 2. Backend Setup (FastAPI)
 
-GROQ_API_KEY=your_key_here
-GROQ_MODEL=llama3-70b-8192
+The backend handles PDF parsing, vector embeddings, and LLM communication.
 
-OLLAMA_URL=http://localhost:11434
-OLLAMA_MODEL=llama3
+1. **Navigate to the backend directory:**
+   ```bash
+   cd research-rag/backend
+   ```
 
-EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
-RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
-```
+2. **Create and activate a Python Virtual Environment:**
+   ```bash
+   # On macOS/Linux:
+   python3 -m venv venv
+   source venv/bin/activate
+   
+   # On Windows:
+   python -m venv venv
+   venv\Scripts\activate
+   ```
 
-Start the backend server:
-```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
+3. **Install the required Python dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-### 2. Frontend Setup
-Navigate to the `frontend/` directory:
-```bash
-cd frontend
-npm install
-npm start
-```
-The React app will proxy requests to the FastAPI backend running on port 8000.
+4. **Set up your Environment Variables:**
+   Create a new file named `.ENV` in the `backend/` folder and configure your preferred LLM provider. Here is the template:
+   ```env
+   # Choose one: gemini | groq | ollama | openrouter
+   LLM_PROVIDER=gemini 
+   
+   # If using Google Gemini:
+   GEMINI_API_KEY=your_gemini_api_key_here
+   GEMINI_MODEL=gemini-1.5-pro
+
+   # If using Groq:
+   GROQ_API_KEY=your_groq_api_key_here
+   GROQ_MODEL=llama3-70b-8192
+
+   # Local Models (No API Key needed)
+   EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+   RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
+   ```
+
+5. **Run the Backend Server:**
+   ```bash
+   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+   ```
+   *The backend will now be running at `http://localhost:8000`.*
+
+### 3. Frontend Setup (React)
+
+The frontend provides the Chat UI and PDF upload interface.
+
+1. **Open a new terminal window** (leave the backend running) and navigate to the frontend directory:
+   ```bash
+   cd research-rag/frontend
+   ```
+
+2. **Install Node modules:**
+   ```bash
+   npm install
+   ```
+
+3. **Start the Frontend Development Server:**
+   ```bash
+   npm start
+   ```
+   *The React app will automatically open in your browser at `http://localhost:3000`.*
+
+---
+
+## 🎯 How to Use the App
+
+1. **Upload a Document:** Click on the "Upload PDF" button in the sidebar and select a document from your computer.
+2. **Wait for Processing:** The backend will extract the text, chunk it into sentences, generate vector embeddings, and store them in ChromaDB.
+3. **Ask Questions:** Once the upload is successful, type a question in the chatbox. The hybrid retrieval engine will scan your document and the LLM will generate a context-aware answer!
