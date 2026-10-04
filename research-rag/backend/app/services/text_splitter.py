@@ -1,7 +1,7 @@
 import tiktoken
 from typing import List, Dict
 from app.utils.preprocessing import TextPreprocessor
-from ..utils.config import config
+from app.utils.config import config
 
 class TextSplitter:
     def __init__(self):
