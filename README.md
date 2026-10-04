@@ -1,11 +1,12 @@
-# Nexus-RAG 🧠
+# Retriv 🧠
 
-Nexus-RAG is a highly advanced, full-stack Retrieval-Augmented Generation (RAG) application. It allows users to upload PDF documents, intelligently chunk and embed the text, and perform highly accurate Question & Answering over the documents using a True Hybrid Search (BM25 + ChromaDB Vectors) followed by a Cross-Encoder Reranking process.
+Retriv is a highly advanced, full-stack Retrieval-Augmented Generation (RAG) application. It allows users to upload PDF documents, intelligently chunk and embed the text, and perform highly accurate Question & Answering over the documents using a True Hybrid Search (BM25 + ChromaDB Vectors) followed by a Cross-Encoder Reranking process.
 
 ## 🚀 Key Features
 
 - **True Hybrid Retrieval:** Combines keyword search (BM25) and semantic search (ChromaDB + SentenceTransformers).
 - **Cross-Encoder Reranking:** Ensures maximum precision by rescoring query/document pairs before sending them to the LLM.
+- **Semantic Caching:** Caches previous LLM responses using semantic similarity in ChromaDB to achieve <300ms latency on repeated or similarly phrased questions.
 - **LLM Agnostic:** Supports local inference via Ollama, or cloud inference via Groq, Google Gemini, and OpenRouter.
 - **Streaming Responses:** Provides real-time streaming of LLM tokens via Server-Sent Events (SSE).
 - **Query Expansion:** Automatically expands user queries into 2-3 variations to maximize document recall.
@@ -41,7 +42,9 @@ graph TD
     classDef external fill:#8B5CF6,stroke:#333,stroke-width:2px,color:#fff
 
     User((User)) --> |"1. Question"| API["API Endpoint<br/>POST /ask"]:::process
-    API --> Expander["Query Expansion<br/>(LLM Service)"]:::process
+    API --> CacheCheck{"Semantic Cache"}
+    CacheCheck -->|Cache Hit| Formatter["Response Formatter"]:::process
+    CacheCheck -->|Cache Miss| Expander["Query Expansion<br/>(LLM Service)"]:::process
     Expander --> Hybrid["Hybrid Retriever"]:::process
     Hybrid --> BM25Search["BM25 Search"]:::process
     Hybrid --> EmbSearch["Vector Search"]:::process
@@ -51,7 +54,8 @@ graph TD
     ContextFilter --> PromptBuilder["Prompt Builder"]:::process
     PromptBuilder --> LLMRoute{"LLM Provider"}
     LLMRoute --> LocalLLM["Ollama / Gemini / Groq"]:::external
-    LocalLLM --> Formatter["Response Formatter"]:::process
+    LocalLLM --> CacheSave["Save to Cache"]:::process
+    CacheSave --> Formatter
     Formatter --> User
 ```
 
@@ -79,8 +83,8 @@ Make sure you have the following installed on your device:
 ### 1. Clone the Repository
 Open your terminal and clone the repository:
 ```bash
-git clone https://github.com/RahulAdyaa/Nexus-RAG.git
-cd Nexus-RAG
+git clone https://github.com/RahulAdyaa/Retriv.git
+cd Retriv
 ```
 
 ### 2. Backend Setup (FastAPI)
@@ -111,16 +115,20 @@ The backend handles PDF parsing, vector embeddings, and LLM communication.
 4. **Set up your Environment Variables:**
    Create a new file named `.ENV` in the `backend/` folder and configure your preferred LLM provider. Here is the template:
    ```env
-   # Choose one: gemini | groq | ollama | openrouter
-   LLM_PROVIDER=gemini 
+   # Choose one: ollama | gemini | groq | openrouter
+   LLM_PROVIDER=ollama 
    
+   # If using Ollama (Local):
+   OLLAMA_URL=http://localhost:11434
+   OLLAMA_MODEL=qwen3:8b
+
    # If using Google Gemini:
    GEMINI_API_KEY=your_gemini_api_key_here
-   GEMINI_MODEL=gemini-1.5-pro
+   GEMINI_MODEL=gemini-1.5-flash-latest
 
    # If using Groq:
    GROQ_API_KEY=your_groq_api_key_here
-   GROQ_MODEL=llama3-70b-8192
+   GROQ_MODEL=mixtral-8x7b-32768
 
    # Local Models (No API Key needed)
    EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
