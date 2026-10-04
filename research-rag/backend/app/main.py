@@ -15,6 +15,7 @@ from .services.pdf_loader import PDFLoader
 from .services.text_splitter import TextSplitter
 from .services.retriever import HybridRetriever
 from .services.llm import GeminiLLMService
+from .services.semantic_cache import SemanticCache
 from .database.sqlite_store import SQLiteStore
 from .utils.config import config
 
@@ -39,6 +40,7 @@ pdf_loader = PDFLoader()
 text_splitter = TextSplitter()
 retriever = HybridRetriever()
 llm_service = GeminiLLMService()
+semantic_cache = SemanticCache()
 db_store = SQLiteStore()
 
 # Create upload directory
@@ -191,11 +193,27 @@ async def ask_question(request: QuestionRequest):
         
         # Prepare filter criteria based on search scope
         filter_criteria = None
+        cache_scope_key = "all"
         if request.search_scope == "session" and request.session_id:
             filter_criteria = {"session_id": request.session_id}
+            cache_scope_key = f"session_{request.session_id}"
         elif request.search_scope == "selected" and request.selected_documents:
             filter_criteria = {"source": {"$in": request.selected_documents}}
-        # For "all" scope, no filter is applied (filter_criteria remains None)
+            cache_scope_key = f"selected_{','.join(sorted(request.selected_documents))}"
+        
+        # Check Semantic Cache
+        query_emb = retriever.embedding_service.generate_query_embedding(request.question)
+        cached_result = semantic_cache.get(query_emb, cache_scope_key)
+        
+        if cached_result:
+            return QuestionResponse(
+                answer=cached_result["answer"],
+                sources=cached_result["sources"],
+                context_used=cached_result["context_used"],
+                success=True,
+                confidence="High (Cache Hit)",
+                error=None
+            )
         
         # Expand the query using LLM for better recall
         expanded_queries = llm_service.expand_query(request.question)
@@ -229,6 +247,16 @@ async def ask_question(request: QuestionRequest):
             chat_history=request.chat_history
         )
         
+        if llm_response["success"]:
+            semantic_cache.set(
+                query=request.question,
+                query_embedding=query_emb,
+                answer=llm_response["answer"],
+                sources=llm_response["sources"],
+                context_used=llm_response["context_used"],
+                scope_key=cache_scope_key
+            )
+        
         return QuestionResponse(
             answer=llm_response["answer"],
             sources=llm_response["sources"],
@@ -250,10 +278,25 @@ async def ask_question_stream(request: QuestionRequest):
         
         # Prepare filter criteria based on search scope
         filter_criteria = None
+        cache_scope_key = "all"
         if request.search_scope == "session" and request.session_id:
             filter_criteria = {"session_id": request.session_id}
+            cache_scope_key = f"session_{request.session_id}"
         elif request.search_scope == "selected" and request.selected_documents:
             filter_criteria = {"source": {"$in": request.selected_documents}}
+            cache_scope_key = f"selected_{','.join(sorted(request.selected_documents))}"
+            
+        # Check Semantic Cache
+        query_emb = retriever.embedding_service.generate_query_embedding(request.question)
+        cached_result = semantic_cache.get(query_emb, cache_scope_key)
+        
+        import json
+        if cached_result:
+            def cache_stream():
+                yield json.dumps({"type": "sources", "sources": cached_result["sources"], "context_used": cached_result["context_used"]}) + "\n"
+                yield json.dumps({"type": "token", "content": cached_result["answer"]}) + "\n"
+                yield json.dumps({"type": "done"}) + "\n"
+            return StreamingResponse(cache_stream(), media_type="text/event-stream")
         
         # Expand the query using LLM for better recall
         expanded_queries = llm_service.expand_query(request.question)
@@ -275,12 +318,40 @@ async def ask_question_stream(request: QuestionRequest):
                 yield json.dumps({"type": "done"}) + "\n"
             return StreamingResponse(empty_stream(), media_type="text/event-stream")
         
+        def cache_wrapper_stream(generator):
+            full_answer = ""
+            sources = []
+            context_used = 0
+            for chunk in generator:
+                yield chunk
+                try:
+                    data = json.loads(chunk.strip())
+                    if data.get("type") == "token":
+                        full_answer += data.get("content", "")
+                    elif data.get("type") == "sources":
+                        sources = data.get("sources", [])
+                        context_used = data.get("context_used", 0)
+                except:
+                    pass
+            
+            if full_answer:
+                semantic_cache.set(
+                    query=request.question,
+                    query_embedding=query_emb,
+                    answer=full_answer,
+                    sources=sources,
+                    context_used=context_used,
+                    scope_key=cache_scope_key
+                )
+                
+        base_stream = llm_service.generate_answer_stream(
+            query=request.question,
+            context_chunks=retrieved_chunks,
+            chat_history=request.chat_history
+        )
+        
         return StreamingResponse(
-            llm_service.generate_answer_stream(
-                query=request.question,
-                context_chunks=retrieved_chunks,
-                chat_history=request.chat_history
-            ),
+            cache_wrapper_stream(base_stream),
             media_type="text/event-stream"
         )
         

@@ -8,11 +8,11 @@ import uuid
 from app.utils.config import config
 
 class ChromaStore:
-    def __init__(self, db_path: str = None):
+    def __init__(self, db_path: str = None, collection_name: str = "pdf_chunks"):
         self.db_path = db_path or config.CHROMA_DB_PATH
         self.client = None
         self.collection = None
-        self.collection_name = "pdf_chunks"
+        self.collection_name = collection_name
         self._initialize_client()
     
     def _initialize_client(self):
