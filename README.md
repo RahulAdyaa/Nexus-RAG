@@ -139,6 +139,14 @@ The backend handles PDF parsing, vector embeddings, and LLM communication.
    ```bash
    uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
    ```
+
+   ```bash
+   cd backend
+   source venv/bin/activate
+   
+   ./start.sh
+
+   ```
    *The backend will now be running at `http://localhost:8000`.*
 
 ### 3. Frontend Setup (React)
