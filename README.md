@@ -2,11 +2,18 @@
 
 Retriv is a highly advanced, full-stack Retrieval-Augmented Generation (RAG) application. It allows users to upload PDF documents, intelligently chunk and embed the text, and perform highly accurate Question & Answering over the documents using a True Hybrid Search (BM25 + ChromaDB Vectors) followed by a Cross-Encoder Reranking process.
 
+## 🌟 Unique Selling Proposition (USP)
+Retriv differentiates itself by achieving **production-grade retrieval accuracy and lightning-fast inference** even on consumer hardware through:
+- **True Hybrid Retrieval:** Combines Lexical BM25 and Semantic Vector Search (unlike standard apps that rely purely on basic vector search).
+- **Zero Hallucinations:** Employs a powerful Cross-Encoder Reranker to virtually eliminate AI hallucinations.
+- **Lightning Speed:** Uses Semantic Caching to deliver near-instant response times for repeated queries.
+- **Complete Flexibility:** 100% LLM-agnostic design, capable of running entirely locally or via cloud providers.
+
 ## 🚀 Key Features
 
 - **True Hybrid Retrieval:** Combines keyword search (BM25) and semantic search (ChromaDB + SentenceTransformers).
 - **Cross-Encoder Reranking:** Ensures maximum precision by rescoring query/document pairs before sending them to the LLM.
-- **Semantic Caching:** Caches previous LLM responses using semantic similarity in ChromaDB to achieve <300ms latency on repeated or similarly phrased questions.
+- **Semantic Caching:** Caches previous LLM responses using semantic similarity in ChromaDB to achieve near-instant latency on repeated or similarly phrased questions.
 - **LLM Agnostic:** Supports local inference via Ollama, or cloud inference via Groq, Google Gemini, and OpenRouter.
 - **Streaming Responses:** Provides real-time streaming of LLM tokens via Server-Sent Events (SSE).
 - **Query Expansion:** Automatically expands user queries into 2-3 variations to maximize document recall.
