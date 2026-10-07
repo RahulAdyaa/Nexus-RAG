@@ -2,6 +2,16 @@ import requests
 import json
 from typing import List, Dict, Optional, Generator
 from app.utils.config import config
+import concurrent.futures
+import re
+
+QUALITY_THRESHOLDS = {
+    "well_supported_groundedness": 0.90,
+    "low_supported_groundedness": 0.50,
+    "required_citation_validity": 1.0,
+    "high_relevance_score": 0.50,
+    "low_relevance_score": 0.10,
+}
 
 
 class LLMService:
@@ -13,30 +23,30 @@ class LLMService:
       - "gemini": Uses Google Gemini API — requires GEMINI_API_KEY.
     """
     
-    def __init__(self):
-        self.provider = config.LLM_PROVIDER  # "ollama", "gemini", or "groq"
+    def __init__(self, provider_override=None, model_override=None):
+        self.provider = provider_override or config.LLM_PROVIDER  # "ollama", "gemini", or "groq"
         
         if self.provider == "gemini":
             self.api_key = config.GEMINI_API_KEY
-            self.gemini_model = config.GEMINI_MODEL
+            self.gemini_model = model_override or config.GEMINI_MODEL
             self.gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.gemini_model}:generateContent"
             if not self.api_key:
                 raise ValueError("GEMINI_API_KEY is required when LLM_PROVIDER=gemini")
         elif self.provider == "groq":
             self.api_key = config.GROQ_API_KEY
-            self.groq_model = config.GROQ_MODEL
+            self.groq_model = model_override or config.GROQ_MODEL
             self.groq_url = "https://api.groq.com/openai/v1/chat/completions"
             if not self.api_key:
                 raise ValueError("GROQ_API_KEY is required when LLM_PROVIDER=groq")
         elif self.provider == "openrouter":
             self.api_key = config.OPENROUTER_API_KEY
-            self.openrouter_model = config.OPENROUTER_MODEL
+            self.openrouter_model = model_override or config.OPENROUTER_MODEL
             self.openrouter_url = "https://openrouter.ai/api/v1/chat/completions"
             if not self.api_key:
                 raise ValueError("OPENROUTER_API_KEY is required when LLM_PROVIDER=openrouter")
         elif self.provider == "ollama":
             self.ollama_url = config.OLLAMA_URL
-            self.ollama_model = config.OLLAMA_MODEL
+            self.ollama_model = model_override or config.OLLAMA_MODEL
             # Verify Ollama is reachable
             try:
                 requests.get(self.ollama_url, timeout=3)
@@ -50,6 +60,16 @@ class LLMService:
         
         model_name = self.ollama_model if self.provider == "ollama" else (self.gemini_model if self.provider == "gemini" else (self.groq_model if self.provider == "groq" else self.openrouter_model))
         print(f"[LLM] Using provider: {self.provider} (model: {model_name})")
+        
+        # Instantiate a separate judge service if this is the main service
+        if provider_override is None:
+            if config.JUDGE_PROVIDER == self.provider and config.JUDGE_MODEL == model_name:
+                print("[LLM] Warning: Judge model is the same as the answer model. This may cause bias.")
+                self.judge_service = self
+            else:
+                self.judge_service = LLMService(provider_override=config.JUDGE_PROVIDER, model_override=config.JUDGE_MODEL)
+        else:
+            self.judge_service = None
     
     # ─── Non-streaming answer generation ──────────────────────────────
     
@@ -87,6 +107,22 @@ class LLMService:
             else:
                 response = self._call_gemini_api(prompt, max_tokens)
                 answer = self._extract_gemini_answer(response)
+                
+            # Regex check for citations; retry once if missing
+            import re
+            if not re.search(r'\[Source \d+.*?\]', answer):
+                print("[LLM] Missing citations in generated answer. Retrying once...")
+                if self.provider == "ollama":
+                    answer = self._call_ollama(prompt, max_tokens)
+                elif self.provider == "groq":
+                    response = self._call_groq_api(prompt, max_tokens, stream=False)
+                    answer = self._extract_groq_answer(response)
+                elif self.provider == "openrouter":
+                    response = self._call_openrouter_api(prompt, max_tokens, stream=False)
+                    answer = self._extract_openrouter_answer(response)
+                else:
+                    response = self._call_gemini_api(prompt, max_tokens)
+                    answer = self._extract_gemini_answer(response)
             
             # Prepare sources (only relevant ones)
             sources = self._prepare_sources(relevant_chunks)
@@ -152,10 +188,10 @@ Do not include any other text, reasoning, or markdown formatting.
             return []
 
     def expand_query(self, query: str) -> List[str]:
-        """Generate 2-3 alternative phrasings or keywords for query expansion"""
+        """Generate 5-8 alternative phrasings or keywords for query expansion"""
         prompt = f"""You are an expert research librarian. The user is searching a document database for: "{query}"
-Generate exactly 2 alternative search queries that capture the same intent but use different academic/technical synonyms or related concepts to improve search recall.
-Return ONLY a JSON array of 2 strings, e.g., ["query one", "query two"]. Do not include any other text."""
+Generate 6 alternative search questions that capture the same intent but use different academic/technical synonyms or related concepts to improve search recall.
+Return ONLY a valid JSON array of 6 strings, e.g., ["question one?", "question two?", ...]. Do not include any other text or markdown formatting."""
         import re
         try:
             if self.provider == "ollama":
@@ -169,13 +205,16 @@ Return ONLY a JSON array of 2 strings, e.g., ["query one", "query two"]. Do not 
             else:
                 response = self._call_gemini_api(prompt, max_tokens=200)
                 answer = self._extract_gemini_answer(response)
-                
+            
             match = re.search(r'\[(.*?)\]', answer, re.DOTALL)
             if match:
                 json_str = "[" + match.group(1) + "]"
-                queries = json.loads(json_str)
-                if isinstance(queries, list):
-                    return [str(q) for q in queries][:2]
+                try:
+                    queries = json.loads(json_str)
+                    if isinstance(queries, list):
+                        return [str(q) for q in queries][:8]
+                except json.JSONDecodeError:
+                    pass
             return []
         except Exception as e:
             print(f"Error expanding query: {e}")
@@ -305,10 +344,14 @@ QUESTION: {query}
 
 RULES:
 1. Answer ONLY using information from the CONTEXT above. Do NOT use outside knowledge.
-2. For every claim, cite the source in brackets like [Source 1] or [Source 2, Page 5].
+2. Every sentence must end with a citation. For every claim, cite the source in brackets. Use ONLY numbered format: [1], [2], etc. Map these numbers to the [Source X: ...] metadata provided above. Do not invent page numbers.
 3. If the context does not contain enough information, say: "The provided documents do not contain sufficient information to answer this question."
-4. Be concise but thorough. Use bullet points for multi-part answers.
-5. Never speculate or infer beyond what the context explicitly states.
+4. Format your answer using clean Markdown. Use short paragraphs and bold text for key terms.
+5. For mathematical expressions, ALWAYS use `$` for inline math and `$$` for block math. Do NOT use `\(` or `\[`.
+
+EXAMPLE:
+Question: What is the formula for the energy and when was it proposed?
+Answer: The formula is $E = mc^2$ [1]. It was proposed in 1905 [2].
 
 ANSWER:"""
         
@@ -321,39 +364,27 @@ ANSWER:"""
     def _prepare_sources(self, chunks: List[Dict]) -> List[Dict]:
         """Prepare source information for the response"""
         sources = []
-        seen_sources = set()
         
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks, 1):
             metadata = chunk.get("metadata", {})
             source_file = metadata.get("source_file", "Unknown")
             page_number = metadata.get("page_number", "Unknown")
             
-            # Create unique identifier for source
-            source_id = f"{source_file}_{page_number}"
+            score = chunk.get("reranker_score", chunk.get("combined_score", chunk.get("score", 0.0)))
             
-            if source_id not in seen_sources:
-                # Raw scores are usually logits (-10 to +10) if using a cross-encoder
-                score = chunk.get("reranker_score", chunk.get("combined_score", chunk.get("score", 0.0)))
-                
-                # Convert logit to a 0-1 probability using sigmoid so the frontend can show it as a percentage
-                if "reranker_score" in chunk:
-                    import math
-                    try:
-                        score = 1.0 / (1.0 + math.exp(-score))
-                    except OverflowError:
-                        score = 0.0 if score < 0 else 1.0
-                
-                sources.append({
-                    "source_file": source_file,
-                    "page_number": page_number,
-                    "chunk_text": chunk.get("text", "")[:200] + "..." if len(chunk.get("text", "")) > 200 else chunk.get("text", ""),
-                    "relevance_score": score
-                })
-                seen_sources.add(source_id)
-        
-        # Sort by relevance score
-        sources.sort(key=lambda x: x["relevance_score"], reverse=True)
-        
+            if "reranker_score" in chunk:
+                # The bge-reranker-base model loaded via sentence_transformers CrossEncoder 
+                # already applies a sigmoid activation, returning a probability in [0, 1].
+                score = score
+            
+            sources.append({
+                "id": i,
+                "source_file": source_file,
+                "page_number": page_number,
+                "chunk_text": chunk.get("text", "")[:200] + "..." if len(chunk.get("text", "")) > 200 else chunk.get("text", ""),
+                "relevance_score": score
+            })
+            
         return sources
     
     # ─── Ollama provider ──────────────────────────────────────────────
@@ -443,7 +474,7 @@ ANSWER:"""
     def _strip_think_tags(self, text: str) -> str:
         """Remove <think>...</think> blocks from model output"""
         import re
-        return re.sub(r'<think>.*?</think>\s*', '', text, flags=re.DOTALL).strip()
+        return re.sub(r'<think>.*?(?:</think>|$)\s*', '', text, flags=re.DOTALL).strip()
     
     # ─── Gemini provider ──────────────────────────────────────────────
     
@@ -521,6 +552,8 @@ ANSWER:"""
     
     def _call_groq_api(self, prompt: str, max_tokens: int, stream: bool = False) -> Dict:
         """Make API call to Groq using OpenAI-compatible REST endpoint"""
+        import time
+        import re
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -531,17 +564,38 @@ ANSWER:"""
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1,
             "max_tokens": max_tokens,
-            "stream": stream
+            "stream": stream,
         }
-        
-        response = requests.post(self.groq_url, headers=headers, json=data, timeout=120 if not stream else 10, stream=stream)
-        
-        if response.status_code != 200:
-            raise Exception(f"Groq API error: {response.status_code} - {response.text}")
+        if "120b" in self.groq_model.lower() or "20b" in self.groq_model.lower():
+            data["reasoning_format"] = "hidden"
             
-        if not stream:
-            return response.json()
-        return response
+        import requests
+        
+        retries = 5
+        for attempt in range(retries):
+            response = requests.post(self.groq_url, headers=headers, json=data, timeout=120 if not stream else 10, stream=stream)
+            
+            if response.status_code == 429:
+                match = re.search(r"try again in ([0-9.]+)s", response.text)
+                if match:
+                    wait_time = float(match.group(1)) + 1.0
+                    print(f"[Judge] Rate limited by Groq API. Waiting {wait_time:.1f}s...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    print(f"[Judge] Rate limited by Groq API. Waiting 10s...")
+                    time.sleep(10)
+                    continue
+                    
+            if response.status_code != 200:
+                raise Exception(f"Groq API error: {response.status_code} - {response.text}")
+                
+            if not stream:
+                return response.json()
+            return response
+            
+        raise Exception("Groq API rate limit exhausted after 5 retries")
+        
         
     def _extract_groq_answer(self, response: Dict) -> str:
         """Extract answer text from Groq non-streaming response"""
@@ -701,6 +755,159 @@ SUMMARY:"""
                 "error": str(e)
             }
 
+    def evaluate_answer_quality(self, query: str, answer: str, sources: List[Dict]) -> Dict:
+        """Evaluate the generated answer for groundedness, citations, and retrieval quality."""
+        import asyncio
+        import re
+        
+        # 1. Retrieval Relevance
+        scores = [s.get("relevance_score", 0) for s in sources]
+        if not scores:
+            scores = [s.get("combined_score", s.get("score", 0)) for s in sources]
+        
+        # Use top-1 reranker score
+        top_score = scores[0] if scores else 0
+        avg_score = sum(scores) / len(scores) if scores else 0
+            
+        # 2. Source Evidence
+        evidence_pages = list(set([f"{s.get('source_file')} Page {s.get('page_number')}" for s in sources]))
+        
+        # Split answer into claims (sentences)
+        claims = [s.strip() for s in re.split(r'(?<=[.!?])\s+', answer) if len(s.strip()) > 10]
+        if not claims:
+            claims = [answer.strip()] if answer.strip() else []
+            
+        # Filter out refusal phrases from claims
+        refusal_phrases = ["couldn't find any relevant information", "do not contain sufficient information", "does not contain sufficient information"]
+        actual_claims = [c for c in claims if not any(p in c.lower() for p in refusal_phrases)]
+        
+        if not actual_claims and any(p in answer.lower() for p in refusal_phrases):
+            return {
+                "verdict": "Not found in document",
+                "groundedness": {"supported": 0, "total": 0, "unsupported_claims": []},
+                "citations": {"valid": 0, "total": 0},
+                "retrieval": {"top": top_score, "avg": avg_score, "chunks_used": len(sources)},
+                "evidence_pages": [],
+                "answer_relevance": "N/A"
+            }
+        
+        # Use actual claims for verification (skipping the refusal sentence if they also added facts)
+        claims = actual_claims if actual_claims else claims
+
+        context_text = "\n".join([f"[Source {s.get('id')}]: {s.get('chunk_text')}" for s in sources])
+
+        def check_claim(claim: str):
+            prompt = f"""Evaluate this claim against the CONTEXT.
+            
+CONTEXT:
+{context_text}
+
+CLAIM:
+{claim}
+
+INSTRUCTIONS:
+Is this claim explicitly supported by the CONTEXT?
+If NO, output exactly "UNSUPPORTED".
+If YES, output a direct quote from the CONTEXT that supports it. Do not output anything else.
+"""
+            service = self.judge_service if hasattr(self, 'judge_service') and self.judge_service else self
+            
+            for attempt in range(2):
+                try:
+                    if service.provider == "ollama":
+                        resp = service._call_ollama(prompt, 500)
+                    elif service.provider == "groq":
+                        print(f"[Judge] Calling Groq with model: {service.groq_model}")
+                        max_toks = 2048 if "120b" in service.groq_model.lower() else 500
+                        raw = service._call_groq_api(prompt, max_toks, stream=False)
+                        choices = raw.get("choices", [])
+                        if not choices:
+                            raise Exception("Empty choices")
+                        choice = choices[0]
+                        if choice.get("finish_reason") == "length":
+                            raise Exception("finish_reason length")
+                        msg = choice.get("message", {})
+                        content = msg.get("content", "")
+                        if not content or not content.strip():
+                            raise Exception("Empty content")
+                        resp = content.strip()
+                    elif service.provider == "openrouter":
+                        resp = service._extract_openrouter_answer(service._call_openrouter_api(prompt, 500, stream=False))
+                    else:
+                        resp = service._extract_gemini_answer(service._call_gemini_api(prompt, 500))
+                    
+                    return (claim, resp.strip())
+                except Exception as e:
+                    if attempt == 1:
+                        raise e
+                    import time
+                    time.sleep(1)
+
+        async def run_checks():
+            tasks = [asyncio.to_thread(check_claim, claim) for claim in claims]
+            return await asyncio.gather(*tasks) if tasks else []
+            
+        try:
+            results = asyncio.run(run_checks())
+        except Exception as e:
+            print(f"[Judge] Verification failed: {e}")
+            return {
+                "verdict": "Verification unavailable",
+                "groundedness": {"supported": 0, "total": len(claims), "unsupported_claims": []},
+                "citations": {"valid": 0, "total": answer.count("[")},
+                "retrieval": {"top": top_score, "avg": avg_score, "chunks_used": len(sources)},
+                "evidence_pages": evidence_pages,
+                "answer_relevance": "N/A"
+            }
+        
+        supported_claims = 0
+        unsupported_list = []
+        for claim, resp in results:
+            if "UNSUPPORTED" in resp.upper() or not resp:
+                unsupported_list.append(claim)
+            else:
+                supported_claims += 1
+
+        total_claims = len(claims)
+        groundedness_ratio = supported_claims / total_claims if total_claims > 0 else 1.0
+        
+        total_citations = answer.count("[")
+        valid_citations = min(supported_claims, total_citations) if total_citations > 0 else (supported_claims if total_claims > 0 else 0)
+        citation_validity = valid_citations / total_citations if total_citations > 0 else 1.0
+        
+        # 4. Overall Verdict (Worst tier across metrics)
+        verdict = "Well supported"
+        
+        if citation_validity < QUALITY_THRESHOLDS["required_citation_validity"]:
+            verdict = "Partially supported"
+        if groundedness_ratio < QUALITY_THRESHOLDS["well_supported_groundedness"]:
+            verdict = "Partially supported"
+            
+        if groundedness_ratio < QUALITY_THRESHOLDS["low_supported_groundedness"]:
+            verdict = "Low support: verify manually"
+            
+        if supported_claims == 0 and total_claims > 0:
+            verdict = "Not supported by document"
+            
+        return {
+            "verdict": verdict,
+            "groundedness": {
+                "supported": supported_claims,
+                "total": total_claims,
+                "unsupported_claims": unsupported_list
+            },
+            "citations": {
+                "valid": valid_citations,
+                "total": total_citations if total_citations > 0 else total_claims
+            },
+            "retrieval": {
+                "top": top_score,
+                "avg": avg_score,
+                "chunks_used": len(sources)
+            },
+            "evidence_pages": evidence_pages,
+            "answer_relevance": "N/A"
+        }
 
 # Backward-compatible alias so existing imports don't break
 GeminiLLMService = LLMService

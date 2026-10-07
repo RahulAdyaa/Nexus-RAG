@@ -6,6 +6,51 @@ import Home from './pages/Home';
 import DocumentSidebar from './components/DocumentSidebar';
 import { fetchSuggestions } from './services/api';
 
+const UserMessage = ({ text }) => {
+  const [copied, setCopied] = useState(false);
+
+  const copyToClipboard = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      // Fallback for non-secure contexts
+      const textArea = document.createElement("textarea");
+      textArea.value = text;
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch (e) {
+        console.error("Copy failed", e);
+      }
+      document.body.removeChild(textArea);
+    }
+  };
+
+  return (
+    <div className="flex justify-end w-full pl-12 group">
+      <div className="relative bg-zinc-800 text-zinc-100 px-5 py-3.5 rounded-2xl rounded-tr-sm text-[15px] shadow-sm leading-relaxed whitespace-pre-wrap select-text selection:bg-zinc-600">
+        {text}
+        <button 
+          onClick={copyToClipboard}
+          className="absolute -left-10 top-1/2 -translate-y-1/2 p-1.5 rounded-md hover:bg-zinc-800 transition-all text-zinc-500 hover:text-white opacity-100 md:opacity-0 group-hover:opacity-100"
+          title="Copy message"
+        >
+          {copied ? (
+            <span className="text-[10px] font-medium text-zinc-300">Copied</span>
+          ) : (
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+};
+
 function App() {
   const [currentPage, setCurrentPage] = useState('chat');
   const [uploadedFiles, setUploadedFiles] = useState([]);
@@ -62,7 +107,16 @@ function App() {
     setCurrentAnswer(prev => prev ? { ...prev, suggestions } : null);
   };
 
-  const displayAnswer = streamingAnswer || currentAnswer;
+  const handleQualityUpdate = (quality) => {
+    setChatHistory(prev => {
+      if (prev.length === 0) return prev;
+      const newHistory = [...prev];
+      newHistory[0] = { ...newHistory[0], quality };
+      return newHistory;
+    });
+  };
+
+
 
   return (
     <div className="flex h-screen w-full bg-black text-zinc-100 overflow-hidden font-sans selection:bg-zinc-800">
@@ -121,7 +175,7 @@ function App() {
         {currentPage === 'chat' ? (
           <>
             <div className="flex-1 overflow-y-auto p-6 md:p-12 z-10 custom-scrollbar flex flex-col">
-              {!displayAnswer ? (
+              {chatHistory.length === 0 && !streamingAnswer ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-center max-w-2xl mx-auto opacity-70">
                    <div className="w-16 h-16 rounded-xl border border-zinc-800 flex items-center justify-center mb-6">
                       <svg className="w-6 h-6 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
@@ -130,19 +184,47 @@ function App() {
                    <p className="text-zinc-500">Ask a question about your uploaded documents or search the knowledge base.</p>
                 </div>
               ) : (
-                <div className="max-w-3xl mx-auto w-full animate-fade-in pb-8">
-                  <Answer 
-                    answer={displayAnswer.answer}
-                    sources={displayAnswer.sources}
-                    isStreaming={displayAnswer.isStreaming}
-                    suggestions={displayAnswer.suggestions}
-                    confidence={displayAnswer.confidence}
-                    onSuggestionClick={(suggestion) => {
-                      if (chatBoxRef.current) {
-                        chatBoxRef.current.submitQuestion(suggestion);
-                      }
-                    }}
-                  />
+                <div className="max-w-3xl mx-auto w-full flex flex-col gap-8 pb-8">
+                  {[...chatHistory].reverse().map((entry) => (
+                    <div key={entry.id} className="flex flex-col gap-6 animate-fade-in">
+                      {/* User Message */}
+                      <UserMessage text={entry.question} />
+                      
+                      {/* AI Answer */}
+                      <div className="w-full">
+                        <Answer 
+                          answer={entry.answer}
+                          sources={entry.sources}
+                          isStreaming={false}
+                          suggestions={entry.suggestions}
+                          confidence={entry.confidence}
+                          quality={entry.quality}
+                          onSuggestionClick={(suggestion) => {
+                            if (chatBoxRef.current) {
+                              chatBoxRef.current.submitQuestion(suggestion);
+                            }
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+
+                  {streamingAnswer && (
+                    <div className="flex flex-col gap-6 animate-fade-in">
+                      {/* User Message */}
+                      <UserMessage text={streamingAnswer.question} />
+                      
+                      {/* AI Answer */}
+                      <div className="w-full">
+                        <Answer 
+                          answer={streamingAnswer.answer}
+                          sources={streamingAnswer.sources}
+                          isStreaming={streamingAnswer.isStreaming}
+                          confidence={streamingAnswer.confidence}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -154,6 +236,7 @@ function App() {
                   ref={chatBoxRef}
                   onNewAnswer={handleNewAnswer}
                   onStreamingUpdate={handleStreamingUpdate}
+                  onQualityUpdate={handleQualityUpdate}
                   isLoading={isLoading}
                   setIsLoading={setIsLoading}
                   hasDocuments={uploadedFiles.length > 0 || totalDocuments > 0 || selectedDocuments.length > 0}

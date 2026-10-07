@@ -60,8 +60,8 @@ class HybridRetriever:
         Returns:
             List of ranked results with combined scores
         """
-        # Fetch more candidates than needed for reranking
-        candidate_count = top_k * 3
+        # Fetch top 15 candidates for reranking
+        candidate_count = 15
         
         all_queries = [query]
         if expanded_queries:
@@ -83,8 +83,8 @@ class HybridRetriever:
         # Combine and score results (it naturally handles deduplication)
         combined_results = self._combine_results(all_bm25_results, all_embedding_results, bm25_weight, embedding_weight)
         
-        # Take top candidates for reranking (limit to 2x top_k to control latency)
-        candidates_for_reranking = combined_results[:top_k * 2]
+        # Take top 15 candidates for reranking
+        candidates_for_reranking = combined_results[:15]
         
         # Cross-encoder reranking for final precision
         if candidates_for_reranking:
@@ -96,49 +96,47 @@ class HybridRetriever:
     def _combine_results(self, bm25_results: List[Tuple[Dict, float]], 
                         embedding_results: List[Tuple[Dict, float]], 
                         bm25_weight: float, embedding_weight: float) -> List[Dict]:
-        """Combine and rank results from BM25 and embedding search"""
+        """Combine and rank results from BM25 and embedding search using Reciprocal Rank Fusion (RRF)"""
         
-        # Normalize scores
-        bm25_scores = self._normalize_scores([score for _, score in bm25_results])
-        embedding_scores = self._normalize_scores([score for _, score in embedding_results])
+        # Sort both lists by score just to ensure they are properly ranked
+        bm25_results.sort(key=lambda x: x[1], reverse=True)
+        embedding_results.sort(key=lambda x: x[1], reverse=True)
         
-        # Create a dictionary to store combined scores
         result_scores = {}
+        k = 60  # Standard RRF constant
         
-        # Add BM25 results
-        for i, (result, _) in enumerate(bm25_results):
+        # Calculate RRF for BM25 results
+        for rank, (result, score) in enumerate(bm25_results, 1):
             chunk_id = result["metadata"]["chunk_id"]
-            result_scores[chunk_id] = {
-                "result": result,
-                "bm25_score": bm25_scores[i] if i < len(bm25_scores) else 0.0,
-                "embedding_score": 0.0
-            }
-        
-        # Add embedding results
-        for i, (result, _) in enumerate(embedding_results):
-            chunk_id = result["metadata"]["chunk_id"]
-            if chunk_id in result_scores:
-                result_scores[chunk_id]["embedding_score"] = embedding_scores[i] if i < len(embedding_scores) else 0.0
+            if chunk_id not in result_scores:
+                result_scores[chunk_id] = {"result": result, "rrf_score": 0.0, "bm25_score": score, "embedding_score": 0.0}
             else:
-                result_scores[chunk_id] = {
-                    "result": result,
-                    "bm25_score": 0.0,
-                    "embedding_score": embedding_scores[i] if i < len(embedding_scores) else 0.0
-                }
-        
-        # Calculate combined scores
+                result_scores[chunk_id]["bm25_score"] = score
+            
+            # Add BM25 RRF score (weighted)
+            result_scores[chunk_id]["rrf_score"] += bm25_weight * (1.0 / (k + rank))
+            
+        # Calculate RRF for Embedding results
+        for rank, (result, score) in enumerate(embedding_results, 1):
+            chunk_id = result["metadata"]["chunk_id"]
+            if chunk_id not in result_scores:
+                result_scores[chunk_id] = {"result": result, "rrf_score": 0.0, "bm25_score": 0.0, "embedding_score": score}
+            else:
+                result_scores[chunk_id]["embedding_score"] = score
+            
+            # Add Embedding RRF score (weighted)
+            result_scores[chunk_id]["rrf_score"] += embedding_weight * (1.0 / (k + rank))
+            
+        # Assemble final results
         final_results = []
         for chunk_id, data in result_scores.items():
-            combined_score = (bm25_weight * data["bm25_score"]) + (embedding_weight * data["embedding_score"])
-            
             result = data["result"].copy()
-            result["combined_score"] = combined_score
+            result["combined_score"] = data["rrf_score"]
             result["bm25_score"] = data["bm25_score"]
             result["embedding_score"] = data["embedding_score"]
-            
             final_results.append(result)
-        
-        # Sort by combined score
+            
+        # Sort by RRF score
         final_results.sort(key=lambda x: x["combined_score"], reverse=True)
         
         return final_results

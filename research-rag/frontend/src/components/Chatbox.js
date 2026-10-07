@@ -1,7 +1,7 @@
 import React, { useState, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { askQuestionStream } from '../services/api';
 
-const ChatBox = forwardRef(({ onNewAnswer, onStreamingUpdate, isLoading, setIsLoading, hasDocuments, currentSession, chatHistory = [], selectedDocuments = [] }, ref) => {
+const ChatBox = forwardRef(({ onNewAnswer, onStreamingUpdate, onQualityUpdate, isLoading, setIsLoading, hasDocuments, currentSession, chatHistory = [], selectedDocuments = [] }, ref) => {
   const [question, setQuestion] = useState('');
   const [error, setError] = useState('');
 
@@ -67,8 +67,18 @@ const ChatBox = forwardRef(({ onNewAnswer, onStreamingUpdate, isLoading, setIsLo
         });
         setIsLoading(false);
       },
+      onQuality: (qualityData) => {
+        if (onQualityUpdate) onQualityUpdate(qualityData);
+      },
       onError: (err) => {
         setError(`Failed to get answer: ${err.message}`);
+        onNewAnswer(currentQuestion, {
+          answer: `**Error:** ${err.message}`,
+          sources: [],
+          context_used: 0,
+          confidence: 'Low',
+          success: false
+        });
         setIsLoading(false);
       }
     });

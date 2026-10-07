@@ -10,24 +10,30 @@ const Upload = ({ onUploadSuccess }) => {
 
   const handleFileSelect = (event) => {
     const selectedFiles = Array.from(event.target.files);
-    const pdfFiles = selectedFiles.filter(file => file.type === 'application/pdf');
-    if (pdfFiles.length !== selectedFiles.length) {
-      setUploadStatus('Only PDF files are allowed');
+    const validFiles = selectedFiles.filter(file => {
+      const ext = file.name.split('.').pop().toLowerCase();
+      return ['pdf', 'doc', 'docx', 'txt'].includes(ext);
+    });
+    if (validFiles.length !== selectedFiles.length) {
+      setUploadStatus('Only PDF, DOC, DOCX, and TXT files are allowed');
       setTimeout(() => setUploadStatus(''), 3000);
     }
-    setFiles(prev => [...prev, ...pdfFiles]);
+    setFiles(prev => [...prev, ...validFiles]);
   };
 
   const handleDrop = (event) => {
     event.preventDefault();
     setIsDragActive(false);
     const droppedFiles = Array.from(event.dataTransfer.files);
-    const pdfFiles = droppedFiles.filter(file => file.type === 'application/pdf');
-    if (pdfFiles.length !== droppedFiles.length) {
-      setUploadStatus('Only PDF files are allowed');
+    const validFiles = droppedFiles.filter(file => {
+      const ext = file.name.split('.').pop().toLowerCase();
+      return ['pdf', 'doc', 'docx', 'txt'].includes(ext);
+    });
+    if (validFiles.length !== droppedFiles.length) {
+      setUploadStatus('Only PDF, DOC, DOCX, and TXT files are allowed');
       setTimeout(() => setUploadStatus(''), 3000);
     }
-    setFiles(prev => [...prev, ...pdfFiles]);
+    setFiles(prev => [...prev, ...validFiles]);
   };
 
   const handleDragOver = (event) => {
@@ -79,7 +85,7 @@ const Upload = ({ onUploadSuccess }) => {
         </div>
         
         <p className="text-sm font-medium text-zinc-400 mb-1 group-hover:text-zinc-200 transition-colors">
-          Click or drag PDF files here
+          Click or drag documents here (.pdf, .txt, .docx)
         </p>
         <p className="text-[10px] text-zinc-600">Max file size 50MB</p>
         
@@ -87,7 +93,7 @@ const Upload = ({ onUploadSuccess }) => {
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".pdf"
+          accept=".pdf,.doc,.docx,.txt"
           onChange={handleFileSelect}
           className="hidden"
         />

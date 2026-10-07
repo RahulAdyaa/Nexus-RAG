@@ -4,7 +4,7 @@ from celery import Celery
 from typing import List
 
 from .utils.config import config
-from .services.pdf_loader import PDFLoader
+from .services.document_loader import DocumentLoader
 from .services.text_splitter import TextSplitter
 from .services.retriever import HybridRetriever
 from .database.sqlite_store import SQLiteStore
@@ -18,7 +18,7 @@ celery_app = Celery(
 )
 
 # Initialize RAG components globally for the worker process
-pdf_loader = PDFLoader()
+document_loader = DocumentLoader()
 text_splitter = TextSplitter()
 db_store = SQLiteStore()
 retriever = HybridRetriever()
@@ -39,7 +39,7 @@ def process_documents_task(file_metadata_list: List[dict], session_id: str):
         filename = file_info["filename"]
         
         try:
-            pages_data = pdf_loader.extract_text_from_pdf(file_path, filename)
+            pages_data = document_loader.extract_text(file_path, filename)
             if not pages_data:
                 continue
             

@@ -70,3 +70,6 @@ logs/
 
 # Docker
 .dockerignore
+backend/eval_*
+backend/bypass_cache.py
+backend/bm25_index_metadata.json

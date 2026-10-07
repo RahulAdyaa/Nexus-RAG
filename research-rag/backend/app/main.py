@@ -102,7 +102,7 @@ async def health_check():
         }
 
 def cleanup_old_uploads():
-    """Remove PDF files older than 2 hours from the uploads cache to save space"""
+    """Remove files older than 2 hours from the uploads cache to save space"""
     try:
         now = time.time()
         max_age = 2 * 3600  # 2 hours
@@ -115,7 +115,7 @@ def cleanup_old_uploads():
         print(f"Error during upload cache cleanup: {e}")
 
 @app.post("/upload", response_model=UploadResponse)
-async def upload_pdfs(files: List[UploadFile] = File(...)):
+async def upload_documents(files: List[UploadFile] = File(...)):
     try:
         cleanup_old_uploads()
         
@@ -127,7 +127,8 @@ async def upload_pdfs(files: List[UploadFile] = File(...)):
         file_metadata_list = []
         
         for file in files:
-            if not file.filename.lower().endswith('.pdf'):
+            ext = file.filename.lower().split('.')[-1]
+            if ext not in ['pdf', 'txt', 'doc', 'docx']:
                 continue
             
             file_path = os.path.join(config.UPLOAD_DIR, file.filename)
@@ -141,11 +142,14 @@ async def upload_pdfs(files: List[UploadFile] = File(...)):
             })
         
         if not file_metadata_list:
-            raise HTTPException(status_code=400, detail="No valid PDF files provided")
+            raise HTTPException(status_code=400, detail="No valid documents provided (supported: .pdf, .txt, .doc, .docx)")
             
         # Send to Celery worker
         from app.worker import process_documents_task
         task = process_documents_task.delay(file_metadata_list, session_id)
+        
+        # Clear semantic cache since new context is added
+        semantic_cache.clear()
         
         return UploadResponse(
             message="Processing started in the background",
@@ -204,6 +208,7 @@ async def ask_question(request: QuestionRequest):
         
         # Expand the query using LLM for better recall
         expanded_queries = llm_service.expand_query(request.question)
+        print(f"DEBUG: Expanded queries: {expanded_queries}")
 
         retrieved_chunks = retriever.hybrid_search(
             query=request.question,
@@ -231,7 +236,8 @@ async def ask_question(request: QuestionRequest):
         llm_response = llm_service.generate_answer(
             query=request.question,
             context_chunks=retrieved_chunks,
-            chat_history=request.chat_history
+            chat_history=request.chat_history,
+            max_tokens=4096
         )
         
         if llm_response["success"]:
@@ -287,6 +293,7 @@ async def ask_question_stream(request: QuestionRequest):
         
         # Expand the query using LLM for better recall
         expanded_queries = llm_service.expand_query(request.question)
+        print(f"DEBUG: Expanded queries: {expanded_queries}")
         
         retrieved_chunks = retriever.hybrid_search(
             query=request.question,
@@ -298,6 +305,7 @@ async def ask_question_stream(request: QuestionRequest):
         )
         
         if not retrieved_chunks:
+            print(f"DEBUG: No chunks retrieved for query '{request.question}'")
             import json
             def empty_stream():
                 yield json.dumps({"type": "sources", "sources": [], "context_used": 0}) + "\n"
@@ -305,14 +313,21 @@ async def ask_question_stream(request: QuestionRequest):
                 yield json.dumps({"type": "done"}) + "\n"
             return StreamingResponse(empty_stream(), media_type="text/event-stream")
         
+        print(f"DEBUG: Query '{request.question}' retrieved {len(retrieved_chunks)} chunks.")
+        for i, chunk in enumerate(retrieved_chunks):
+            print(f"DEBUG: Chunk {i} text: {chunk.get('text', '')[:200]}...")
+        
         def cache_wrapper_stream(generator):
             full_answer = ""
             sources = []
             context_used = 0
+            done_chunk = None
             for chunk in generator:
-                yield chunk
                 try:
                     data = json.loads(chunk.strip())
+                    if data.get("type") == "done":
+                        done_chunk = chunk
+                        continue
                     if data.get("type") == "token":
                         full_answer += data.get("content", "")
                     elif data.get("type") == "sources":
@@ -320,21 +335,34 @@ async def ask_question_stream(request: QuestionRequest):
                         context_used = data.get("context_used", 0)
                 except:
                     pass
+                yield chunk
             
             if full_answer:
+                quality = None
+                try:
+                    quality = llm_service.evaluate_answer_quality(request.question, full_answer, sources)
+                    yield json.dumps({"type": "quality", "data": quality}) + "\n"
+                except Exception as e:
+                    print("Error computing quality:", e)
+                    
                 semantic_cache.set(
                     query=request.question,
                     query_embedding=query_emb,
                     answer=full_answer,
                     sources=sources,
                     context_used=context_used,
-                    scope_key=cache_scope_key
+                    scope_key=cache_scope_key,
+                    quality=quality
                 )
+            
+            if done_chunk:
+                yield done_chunk
                 
         base_stream = llm_service.generate_answer_stream(
             query=request.question,
             context_chunks=retrieved_chunks,
-            chat_history=request.chat_history
+            chat_history=request.chat_history,
+            max_tokens=4096
         )
         
         return StreamingResponse(
@@ -384,6 +412,9 @@ async def delete_document(document_id: int):
         
         # Delete from Chroma and BM25
         retriever.delete_document(filename)
+        
+        # Clear semantic cache
+        semantic_cache.clear()
         
         # Delete file from uploads directory
         file_path = os.path.join(config.UPLOAD_DIR, filename)

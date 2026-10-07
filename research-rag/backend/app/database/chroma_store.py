@@ -32,17 +32,31 @@ class ChromaStore:
         # Get or create collection
         try:
             self.collection = self.client.get_collection(name=self.collection_name)
+            col_meta = self.collection.metadata or {}
+            self.uses_l2 = col_meta.get("hnsw:space", "l2") != "cosine"
+            if self.uses_l2:
+                print(f"Warning: Collection '{self.collection_name}' uses L2 distance. Re-ingestion is recommended for pure cosine similarity. Using L2 fallback mapping.")
         except Exception:
             # Collection doesn't exist, create it
             self.collection = self.client.create_collection(
                 name=self.collection_name,
-                metadata={"description": "PDF document chunks for Q&A"}
+                metadata={"description": "PDF document chunks for Q&A", "hnsw:space": "cosine"}
             )
+            self.uses_l2 = False
     
     def add_chunks(self, chunks: List[Dict], embeddings: Optional[np.ndarray] = None):
         """Add chunks to Chroma collection"""
         if not chunks:
             return
+            
+        try:
+            self._do_add_chunks(chunks, embeddings)
+        except Exception:
+            # Re-initialize in case collection was deleted by another process
+            self._initialize_client()
+            self._do_add_chunks(chunks, embeddings)
+            
+    def _do_add_chunks(self, chunks: List[Dict], embeddings: Optional[np.ndarray] = None):
         
         # Prepare data for Chroma
         documents = []
@@ -88,6 +102,16 @@ class ChromaStore:
         """Search for similar chunks with optional filtering"""
         if not self.collection:
             return []
+            
+        try:
+            return self._do_search(query, top_k, query_embedding, filter_criteria)
+        except Exception:
+            self._initialize_client()
+            return self._do_search(query, top_k, query_embedding, filter_criteria)
+            
+    def _do_search(self, query: str, top_k: int = 5, query_embedding: Optional[np.ndarray] = None, filter_criteria: Dict = None) -> List[Tuple[Dict, float]]:
+        if not self.collection:
+            return []
         
         try:
             # Build where clause from filter criteria
@@ -114,6 +138,17 @@ class ChromaStore:
             formatted_results = []
             if results["documents"] and results["documents"][0]:
                 for i in range(len(results["documents"][0])):
+                    raw_dist = results["distances"][0][i]
+                    if getattr(self, "uses_l2", False):
+                        # L2 squared fallback for normalized embeddings (ranges 0 to 4)
+                        score = 1.0 - (raw_dist / 2.0)
+                    else:
+                        # Cosine distance (ranges 0 to 2)
+                        score = 1.0 - raw_dist
+                        
+                    # Clamp to [0, 1]
+                    score = max(0.0, min(1.0, score))
+                    
                     result = {
                         "text": results["documents"][0][i],
                         "metadata": {
@@ -122,9 +157,9 @@ class ChromaStore:
                             "chunk_id": int(results["metadatas"][0][i]["chunk_id"]),
                             "tokens": int(results["metadatas"][0][i]["tokens"])
                         },
-                        "score": 1.0 - results["distances"][0][i]  # Convert distance to similarity
+                        "score": score
                     }
-                    formatted_results.append((result, result["score"]))
+                    formatted_results.append((result, score))
             
             return formatted_results
             
@@ -188,8 +223,9 @@ class ChromaStore:
         
         self.collection = self.client.create_collection(
             name=self.collection_name,
-            metadata={"description": "PDF document chunks for Q&A"}
+            metadata={"description": "PDF document chunks for Q&A", "hnsw:space": "cosine"}
         )
+        self.uses_l2 = False
     
     def get_chunk_by_metadata(self, source_file: str, page_number: int) -> List[Dict]:
         """Get chunks by source file and page number"""

@@ -23,6 +23,10 @@ class Config:
     OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
     OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b")
     
+    # Judge settings
+    JUDGE_PROVIDER = os.getenv("JUDGE_PROVIDER", LLM_PROVIDER)
+    JUDGE_MODEL = os.getenv("JUDGE_MODEL", GROQ_MODEL if LLM_PROVIDER == "groq" else None)
+    
     # Storage
     UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./uploads")
     CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./chroma_db")
@@ -30,7 +34,7 @@ class Config:
     CHUNK_SIZE = 500
     CHUNK_OVERLAP = 50
     EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
-    RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    RERANKER_MODEL = "BAAI/bge-reranker-base"
     
     @classmethod
     def validate(cls):

@@ -48,17 +48,23 @@ class SemanticCache:
                 distance = results["distances"][0][0]
                 if distance <= self.threshold:
                     metadata = results["metadatas"][0][0]
-                    return {
+                    cache_entry = {
                         "answer": metadata["answer"],
                         "sources": json.loads(metadata.get("sources", "[]")),
                         "context_used": int(metadata.get("context_used", 0)),
                         "distance": distance
                     }
+                    if "quality" in metadata:
+                        try:
+                            cache_entry["quality"] = json.loads(metadata["quality"])
+                        except:
+                            pass
+                    return cache_entry
         except Exception as e:
             print(f"Cache get error: {e}")
         return None
         
-    def set(self, query: str, query_embedding: np.ndarray, answer: str, sources: list, context_used: int, scope_key: str):
+    def set(self, query: str, query_embedding: np.ndarray, answer: str, sources: list, context_used: int, scope_key: str, quality: dict = None, judge_model: str = "unknown", threshold_version: str = "1.0"):
         """Store the generated answer in the semantic cache."""
         if not self.collection:
             return
@@ -69,8 +75,12 @@ class SemanticCache:
                 "answer": answer,
                 "sources": json.dumps(sources),
                 "context_used": str(context_used),
-                "scope": scope_key
+                "scope": scope_key,
+                "judge_model": judge_model,
+                "threshold_version": threshold_version
             }
+            if quality is not None:
+                metadata["quality"] = json.dumps(quality)
             
             self.collection.add(
                 documents=[query],
@@ -80,3 +90,13 @@ class SemanticCache:
             )
         except Exception as e:
             print(f"Error saving to cache: {e}")
+
+    def clear(self):
+        """Clear all cached entries."""
+        try:
+            if self.collection:
+                self.client.delete_collection(name=self.collection_name)
+                self.collection = None
+                self._initialize_client()
+        except Exception as e:
+            print(f"Error clearing cache: {e}")

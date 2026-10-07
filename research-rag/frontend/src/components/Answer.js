@@ -1,35 +1,130 @@
 import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import { API_BASE_URL } from '../services/api';
 
-const Answer = ({ answer, sources, isStreaming, suggestions, confidence, onSuggestionClick }) => {
+const Answer = ({ answer, sources, isStreaming, suggestions, confidence, quality, onSuggestionClick }) => {
   const [showSources, setShowSources] = useState(false);
+  const [showQuality, setShowQuality] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(answer);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const copyToClipboard = async () => {
+    try {
+      await navigator.clipboard.writeText(answer || '');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      const textArea = document.createElement("textarea");
+      textArea.value = answer || '';
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch (e) {
+        console.error("Copy failed", e);
+      }
+      document.body.removeChild(textArea);
+    }
   };
 
-  const getConfidenceBadge = () => {
-    if (!confidence) return null;
-    const config = {
-      'High': { bg: 'bg-zinc-900', border: 'border-zinc-800', text: 'text-zinc-300', icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' },
-      'Medium': { bg: 'bg-zinc-900', border: 'border-zinc-800', text: 'text-zinc-400', icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z' },
-      'Low': { bg: 'bg-red-950/30', border: 'border-red-900/30', text: 'text-red-500', icon: 'M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z' }
-    };
-    
-    const style = config[confidence] || config['Low'];
-    
+
+
+  const getVerdictColor = (verdict) => {
+    if (!verdict) return 'text-zinc-400 bg-zinc-800 border-zinc-700';
+    if (verdict.includes('Well supported')) return 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20';
+    if (verdict.includes('Partially supported')) return 'text-amber-400 bg-amber-400/10 border-amber-400/20';
+    if (verdict.includes('Not found in document')) return 'text-zinc-400 bg-zinc-400/10 border-zinc-400/20';
+    if (verdict.includes('Not supported by document')) return 'text-rose-400 bg-rose-400/10 border-rose-400/20';
+    return 'text-red-400 bg-red-400/10 border-red-400/20';
+  };
+
+  const renderQualityPanel = () => {
+    if (isStreaming) return null;
+    if (!quality) {
+      return (
+        <div className="flex items-center gap-2 text-xs text-zinc-500 animate-pulse mt-4 pt-3 border-t border-zinc-800 px-1">
+          <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+          Analyzing answer quality...
+        </div>
+      );
+    }
+
+    const { verdict, groundedness, citations, retrieval, evidence_pages } = quality;
+    const isErrorOrNotFound = verdict === "Not found in document";
+
     return (
-      <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md border ${style.bg} ${style.border}`}>
-        <svg className={`w-3 h-3 ${style.text}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={style.icon}></path>
-        </svg>
-        <span className={`text-[10px] font-medium tracking-wider ${style.text}`}>
-          {confidence} Confidence
-        </span>
+      <div className="mt-4 pt-3 border-t border-zinc-800">
+        <div 
+          className="flex flex-wrap items-center justify-between cursor-pointer group"
+          onClick={() => setShowQuality(!showQuality)}
+        >
+          <div className="flex flex-wrap items-center gap-3">
+            <div className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border uppercase tracking-wider ${getVerdictColor(verdict)}`}>
+              {verdict}
+            </div>
+            
+            {!isErrorOrNotFound && (
+              <div className="text-xs text-zinc-400 flex items-center gap-2">
+                <span>{groundedness?.supported}/{groundedness?.total} claims</span>
+                <span className="w-1 h-1 rounded-full bg-zinc-700"></span>
+                <span>{evidence_pages?.length} pages</span>
+              </div>
+            )}
+          </div>
+          <button className="text-zinc-500 group-hover:text-zinc-300">
+            <svg className={`w-4 h-4 transition-transform ${showQuality ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
+          </button>
+        </div>
+
+        {showQuality && !isErrorOrNotFound && (
+          <div className="mt-4 space-y-4 bg-zinc-900/50 p-4 rounded-xl border border-zinc-800/50">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <h5 className="text-[10px] uppercase font-bold tracking-wider text-zinc-500 mb-2">Groundedness</h5>
+                <div className="text-xs text-zinc-300">
+                  <span className="font-semibold text-white">{groundedness.supported} of {groundedness.total}</span> claims are explicitly supported by retrieved context.
+                </div>
+                {groundedness.unsupported_claims?.length > 0 && (
+                  <div className="mt-2 text-xs text-rose-400 bg-rose-400/10 p-2 rounded border border-rose-400/20">
+                    <span className="font-semibold block mb-1">Unsupported Claims:</span>
+                    <ul className="list-disc pl-4 space-y-1">
+                      {groundedness.unsupported_claims.map((claim, i) => (
+                        <li key={i}>{claim}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <h5 className="text-[10px] uppercase font-bold tracking-wider text-zinc-500 mb-2">Retrieval & Citations</h5>
+                <div className="space-y-1.5 text-xs text-zinc-300">
+                  <div className="flex justify-between">
+                    <span className="text-zinc-400">Citations Valid:</span>
+                    <span className="font-semibold">{citations.valid} / {citations.total}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-400">Top Retrieval match:</span>
+                    <span className="font-semibold">{(retrieval.top * 100).toFixed(0)}%</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-400">Avg Retrieval match:</span>
+                    <span className="font-semibold">{(retrieval.avg * 100).toFixed(0)}%</span>
+                  </div>
+                  {retrieval.top < 0.10 && (
+                    <div className="mt-2 text-[10px] text-amber-400/80 bg-amber-400/10 p-1.5 rounded border border-amber-400/20 text-center">
+                      ⚠ Document may not cover this
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -50,15 +145,14 @@ const Answer = ({ answer, sources, isStreaming, suggestions, confidence, onSugge
             </div>
             
             <div className="flex items-center gap-3">
-               {!isStreaming && getConfidenceBadge()}
                {!isStreaming && answer && (
                  <button 
                    onClick={copyToClipboard}
-                   className="p-1.5 rounded-md hover:bg-zinc-800 transition-all text-zinc-500 hover:text-white"
+                   className="flex items-center gap-1.5 p-1.5 rounded-md hover:bg-zinc-800 transition-all text-zinc-500 hover:text-white opacity-100 md:opacity-0 group-hover:opacity-100"
                    title="Copy answer"
                  >
                    {copied ? (
-                     <svg className="w-4 h-4 text-zinc-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
+                     <span className="text-[10px] font-medium text-zinc-300 px-1">Copied</span>
                    ) : (
                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
                    )}
@@ -67,8 +161,40 @@ const Answer = ({ answer, sources, isStreaming, suggestions, confidence, onSugge
             </div>
           </div>
 
-          <div className="prose prose-invert prose-zinc max-w-none text-zinc-300 prose-p:leading-relaxed prose-pre:bg-[#111] prose-pre:border prose-pre:border-zinc-800 prose-headings:text-zinc-100 text-sm">
-            <ReactMarkdown>{answer || ''}</ReactMarkdown>
+          <div className="prose prose-invert prose-zinc max-w-none text-zinc-300 prose-p:leading-relaxed prose-pre:bg-[#111] prose-pre:border prose-pre:border-zinc-800 prose-headings:text-zinc-100 text-sm select-text selection:bg-zinc-700">
+            <ReactMarkdown
+              remarkPlugins={[remarkMath]}
+              rehypePlugins={[rehypeKatex]}
+              components={{
+                a: ({ node, ...props }) => {
+                  const match = props.href?.match(/^#cite-(\d+)$/);
+                  if (match) {
+                    const id = parseInt(match[1]);
+                    const source = sources?.find(s => s.id === id);
+                    if (source) {
+                      return (
+                        <a 
+                          href={`${API_BASE_URL}/uploads/${encodeURIComponent(source.source_file)}#page=${source.page_number}`}
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center justify-center w-5 h-5 ml-1 text-[10px] font-bold text-white bg-zinc-800 rounded-full hover:bg-zinc-700 transition-colors cursor-pointer group relative"
+                          title={`${source.source_file}, Page ${source.page_number}\n\n"${source.chunk_text}"`}
+                        >
+                          {id}
+                        </a>
+                      );
+                    }
+                  }
+                  return <a {...props} className="text-blue-400 hover:underline" target="_blank" rel="noopener noreferrer" />;
+                }
+              }}
+            >
+              {answer ? answer
+                .replace(/\\\(([\s\S]*?)\\\)/g, '$$$1$$')
+                .replace(/\\\[([\s\S]*?)\\\]/g, '$$$$$1$$$$')
+                .replace(/\[(\d+)\]/g, '[$1](#cite-$1)') 
+              : ''}
+            </ReactMarkdown>
             {isStreaming && <span className="inline-block w-2 h-4 ml-1 bg-white animate-pulse align-middle"></span>}
           </div>
         </div>
@@ -117,6 +243,9 @@ const Answer = ({ answer, sources, isStreaming, suggestions, confidence, onSugge
           )}
         </div>
       )}
+
+      {/* Answer Quality Panel */}
+      {renderQualityPanel()}
 
       {/* Suggested Follow-ups */}
       {!isStreaming && suggestions !== undefined && (

@@ -42,15 +42,21 @@ class Reranker:
         # Get cross-encoder scores (higher = more relevant)
         scores = self.model.predict(pairs)
         
+        import math
+        
         # Attach reranker scores and sort
         reranked = []
         for i, chunk in enumerate(chunks):
             result = chunk.copy()
-            result["reranker_score"] = float(scores[i])
+            
+            # The cross encoder prediction is already a probability in [0, 1]
+            raw_score = float(scores[i])
+            
+            result["reranker_score"] = raw_score
             # Keep original scores for transparency
             result["original_combined_score"] = chunk.get("combined_score", 0.0)
             # Use reranker score as the primary ranking signal
-            result["combined_score"] = float(scores[i])
+            result["combined_score"] = raw_score
             reranked.append(result)
         
         # Sort by reranker score (descending)

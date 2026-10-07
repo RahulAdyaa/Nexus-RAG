@@ -76,9 +76,9 @@ export const uploadPDFs = async (files, onProgress) => {
  * @param {function} onToken - Called with each new token string
  * @param {function} onSources - Called with sources metadata
  * @param {function} onDone - Called when generation is complete
- * @param {function} onError - Called on error
+ * @param {function} onQuality - Called with quality metrics after done
  */
-export const askQuestionStream = async (questionData, { onToken, onSources, onDone, onError }) => {
+export const askQuestionStream = async (questionData, { onToken, onSources, onDone, onQuality, onError }) => {
   try {
     const response = await fetch(`${API_BASE_URL}/ask/stream`, {
       method: 'POST',
@@ -114,6 +114,8 @@ export const askQuestionStream = async (questionData, { onToken, onSources, onDo
             onSources(data);
           } else if (data.type === 'done') {
             onDone();
+          } else if (data.type === 'quality') {
+            if (onQuality) onQuality(data.data);
           } else if (data.type === 'error') {
             onError(new Error(data.content));
           }

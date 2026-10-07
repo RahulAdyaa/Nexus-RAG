@@ -25,6 +25,8 @@ class BM25Index:
         self.corpus = []
         self.bm25 = None
         self.chunk_metadata = []
+        self.chunk_texts = []
+        self.last_load_time = 0.0
         
     def _tokenize(self, text: str) -> List[str]:
         """Tokenize text by extracting alphanumeric words and removing stop words"""
@@ -42,6 +44,7 @@ class BM25Index:
             tokens = self._tokenize(chunk["text"])
             corpus.append(tokens)
             self.chunk_metadata.append(chunk["metadata"])
+            self.chunk_texts.append(chunk["text"])
         
         self.corpus = corpus
         self.bm25 = BM25Okapi(corpus)
@@ -53,7 +56,8 @@ class BM25Index:
         """Save BM25 index to disk"""
         index_data = {
             "corpus": self.corpus,
-            "chunk_metadata": self.chunk_metadata
+            "chunk_metadata": self.chunk_metadata,
+            "chunk_texts": getattr(self, "chunk_texts", [])
         }
         
         with open(self.index_path, 'wb') as f:
@@ -74,12 +78,20 @@ class BM25Index:
         
         self.corpus = index_data["corpus"]
         self.chunk_metadata = index_data["chunk_metadata"]
+        self.chunk_texts = index_data.get("chunk_texts", [" ".join(tokens) for tokens in self.corpus])
         self.bm25 = BM25Okapi(self.corpus)
+        self.last_load_time = os.path.getmtime(self.index_path)
         
         return True
     
     def search(self, query: str, top_k: int = 5, filter_criteria: Dict = None) -> List[Tuple[Dict, float]]:
         """Search using BM25 with optional filtering"""
+        # Auto-reload if file was updated by another process (e.g. Celery)
+        if os.path.exists(self.index_path):
+            current_mtime = os.path.getmtime(self.index_path)
+            if current_mtime > self.last_load_time:
+                self.load_index()
+
         if not self.bm25:
             return []
         
@@ -96,7 +108,10 @@ class BM25Index:
                 valid_indices.append(idx)
         
         # Filter scores to only include valid indices
-        if filter_criteria and valid_indices:
+        # Filter scores to only include valid indices
+        if filter_criteria:
+            if not valid_indices:
+                return []
             filtered_scores = [(idx, scores[idx]) for idx in valid_indices if scores[idx] > 0]
             filtered_scores.sort(key=lambda x: x[1], reverse=True)
             top_results = filtered_scores[:top_k]
@@ -107,7 +122,7 @@ class BM25Index:
         
         results = []
         for idx, score in top_results:
-            chunk_text = " ".join(self.corpus[idx])
+            chunk_text = self.chunk_texts[idx] if hasattr(self, 'chunk_texts') and idx < len(self.chunk_texts) else " ".join(self.corpus[idx])
             result = {
                 "text": chunk_text,
                 "metadata": self.chunk_metadata[idx],
@@ -131,14 +146,14 @@ class BM25Index:
             elif key == "source":
                 if isinstance(value, dict) and "$in" in value:
                     # Handle $in operator for multiple sources
-                    if metadata.get("source") not in value["$in"]:
+                    if metadata.get("source_file") not in value["$in"]:
                         return False
                 else:
-                    if metadata.get("source") != value:
+                    if metadata.get("source_file") != value:
                         return False
             else:
                 if metadata.get(key) != value:
-                    return False
+                        return False
         
         return True
     
@@ -155,6 +170,10 @@ class BM25Index:
                 metadata["session_id"] = chunk["session_id"]
             
             self.chunk_metadata.append(metadata)
+            
+            if not hasattr(self, 'chunk_texts'):
+                self.chunk_texts = [" ".join(t) for t in self.corpus[:-1]]
+            self.chunk_texts.append(chunk["text"])
         
         # Rebuild index
         self.bm25 = BM25Okapi(self.corpus)
@@ -164,17 +183,23 @@ class BM25Index:
         """Delete all chunks from a specific source file and rebuild index"""
         new_corpus = []
         new_metadata = []
+        new_texts = []
         
         for i, meta in enumerate(self.chunk_metadata):
             if meta.get("source_file") != source_file:
                 new_corpus.append(self.corpus[i])
                 new_metadata.append(meta)
+                if hasattr(self, 'chunk_texts') and i < len(self.chunk_texts):
+                    new_texts.append(self.chunk_texts[i])
+                else:
+                    new_texts.append(" ".join(self.corpus[i]))
                 
         if len(new_corpus) == len(self.corpus):
             return  # No change
             
         self.corpus = new_corpus
         self.chunk_metadata = new_metadata
+        self.chunk_texts = new_texts
         if self.corpus:
             self.bm25 = BM25Okapi(self.corpus)
         else:
